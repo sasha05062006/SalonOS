@@ -509,12 +509,16 @@ def superadmin_subscription(salon_id:str,request:Request,days:int=30,plan:str="P
     plan=plan.upper()
     if plan not in PLANS: raise HTTPException(400,"Неизвестный тариф")
     if days<1 or days>3650: raise HTTPException(400,"Некорректный срок")
+    expires_at=now_utc()+timedelta(days=days)
     with get_engine().begin() as conn:
-        conn.execute(text("""INSERT INTO subscriptions(id,salon_id,plan,status,price,currency,started_at,expires_at)
-          VALUES(:id,:sid,:plan,'ACTIVE',:price,'UZS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + INTERVAL '30 days')
-          ON CONFLICT(salon_id) DO UPDATE SET plan=:plan,status='ACTIVE',price=:price,started_at=COALESCE(subscriptions.started_at,CURRENT_TIMESTAMP),
-          expires_at=CURRENT_TIMESTAMP + (:days || ' days')::interval,updated_at=CURRENT_TIMESTAMP"""),
-          {"id":uid(),"sid":salon_id,"plan":plan,"price":PLANS[plan]["price"],"days":days})
+        existing=conn.execute(text("SELECT id FROM subscriptions WHERE salon_id=:sid"),{"sid":salon_id}).first()
+        params={"id":uid(),"sid":salon_id,"plan":plan,"price":PLANS[plan]["price"],"started":now_utc(),"expires":expires_at}
+        if existing:
+            conn.execute(text("""UPDATE subscriptions SET plan=:plan,status='ACTIVE',price=:price,started_at=COALESCE(started_at,:started),
+              expires_at=:expires,updated_at=:started WHERE salon_id=:sid"""),params)
+        else:
+            conn.execute(text("""INSERT INTO subscriptions(id,salon_id,plan,status,price,currency,started_at,expires_at)
+              VALUES(:id,:sid,:plan,'ACTIVE',:price,'UZS',:started,:expires)"""),params)
         conn.execute(text("UPDATE salons SET is_active=TRUE,status='ACTIVE' WHERE id=:id"),{"id":salon_id})
     return {"ok":True,"status":"ACTIVE","days":days,"plan":plan}
 
