@@ -1,9 +1,12 @@
 {
-  "name": "SalonOS",
-  "short_name": "SalonOS",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#f5f7fb",
-  "theme_color": "#111827",
-  "description": "Онлайн-запись и управление салоном"
+  "name":"SalonOS",
+  "short_name":"SalonOS",
+  "start_url":"/",
+  "scope":"/",
+  "display":"standalone",
+  "orientation":"portrait-primary",
+  "background_color":"#f6f7fb",
+  "theme_color":"#7c3aed",
+  "description":"Онлайн-запись и управление салоном",
+  "categories":["business","productivity"]
 }
