@@ -379,6 +379,9 @@ def superadmin_toggle(salon_id:str,request:Request,active:bool):
 
 @app.get("/")
 def index(): return FileResponse(BASE_DIR/"frontend"/"index.html")
+
+@app.get("/s/{slug}")
+def public_page(slug: str): return FileResponse(BASE_DIR/"frontend"/"index.html")
 @app.get("/manifest.webmanifest")
 def manifest(): return FileResponse(BASE_DIR/"frontend"/"manifest.webmanifest",media_type="application/manifest+json")
 @app.get("/sw.js")
