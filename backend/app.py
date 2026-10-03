@@ -145,7 +145,7 @@ def create_master_login(payload:MasterRegisterIn,request:Request,response:Respon
         if not master: raise HTTPException(404,"Мастер не найден")
         if conn.execute(text("SELECT 1 FROM users WHERE lower(email)=:email"),{"email":email}).first(): raise HTTPException(409,"Этот email уже используется")
         uid_=uid()
-        conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role) VALUES(:id,:sid,:name,:email,:hash,'master')"""),{"id":uid_,"sid":u["salon_id"],"name":master.name,"email":email,"hash":hash_password(payload.password)})
+        conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role,master_id) VALUES(:id,:sid,:name,:email,:hash,'master',:master_id)"""),{"id":uid_,"sid":u["salon_id"],"name":master.name,"email":email,"hash":hash_password(payload.password),"master_id":master.id})
     token=secrets.token_urlsafe(48)
     with get_engine().begin() as conn: conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":uid_,"exp":now_utc()+timedelta(days=30)})
     response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=False,max_age=2592000)
@@ -356,10 +356,8 @@ def public_appointment(slug:str,payload:AppointmentIn):
 def admin_appointments(request:Request,day:str|None=None,status:str|None=None,master_id:str|None=None):
     u=require_role(request,"admin","master")
     if u["role"]=="master":
-        with get_engine().begin() as conn:
-            mr=conn.execute(text("SELECT id FROM masters WHERE salon_id=:sid AND lower(name)=lower(:name) AND is_active=TRUE"),{"sid":u["salon_id"],"name":u["name"]}).first()
-        master_id=mr.id if mr else "__none__"
-    day=day or date.today().isoformat()
+        master_id=u.get("master_id") or "__none__"
+    day=day or datetime.now(ZoneInfo("Asia/Tashkent")).date().isoformat()
     try: d=date.fromisoformat(day)
     except ValueError: raise HTTPException(400,"Неверная дата")
     start=datetime.combine(d,time.min); end=start+timedelta(days=1)
