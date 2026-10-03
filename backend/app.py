@@ -196,7 +196,10 @@ def logout(request:Request,response:Response):
 
 @app.get("/api/me")
 def me(request:Request):
-    u=auth_user(request); return {k:u[k] for k in ("id","name","email","role","salon_id","salon_name","salon_slug")}
+    u=auth_user(request)
+    data={k:u[k] for k in ("id","name","email","role","salon_id","salon_name","salon_slug")}
+    data["is_impersonating"]=bool(request.cookies.get("salonos_superadmin_return"))
+    return data
 
 @app.get("/api/admin/salon")
 def get_salon(request:Request):
@@ -619,6 +622,37 @@ def superadmin_trial(salon_id:str,request:Request,days:int=7,plan:str="PRO"):
               VALUES(:id,:sid,:plan,'TRIAL',:price,'UZS',:started,:expires)"""),params)
         conn.execute(text("UPDATE salons SET is_active=TRUE,status='ACTIVE' WHERE id=:sid"),{"sid":salon_id})
     return {"ok":True,"status":"TRIAL","plan":plan,"days":days,"expires_at":expires.isoformat()}
+
+@app.post("/api/superadmin/salons/{salon_id}/enter")
+def superadmin_enter_salon(salon_id:str,request:Request,response:Response):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    current=request.cookies.get(COOKIE)
+    with get_engine().begin() as conn:
+        salon=conn.execute(text("SELECT id,name,slug FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":salon_id}).first()
+        if not salon: raise HTTPException(404,"Салон не найден")
+        admin=conn.execute(text("""SELECT id FROM users WHERE salon_id=:sid AND role='admin' AND is_active=TRUE
+          ORDER BY id LIMIT 1"""),{"sid":salon_id}).first()
+        if not admin: raise HTTPException(404,"У салона нет активного администратора")
+        token=secrets.token_urlsafe(48)
+        conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":admin.id,"exp":now_utc()+timedelta(hours=8)})
+    response.set_cookie("salonos_superadmin_return",current,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=28800)
+    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=28800)
+    return {"ok":True,"salon_id":salon.id,"salon_name":salon.name}
+
+@app.post("/api/superadmin/exit-salon")
+def superadmin_exit_salon(request:Request,response:Response):
+    original=request.cookies.get("salonos_superadmin_return")
+    if not original: raise HTTPException(400,"Режим входа в салон не активен")
+    current=request.cookies.get(COOKIE)
+    with get_engine().begin() as conn:
+        if current: conn.execute(text("DELETE FROM sessions WHERE token=:token"),{"token":current})
+        row=conn.execute(text("""SELECT u.role FROM sessions x JOIN users u ON u.id=x.user_id
+          WHERE x.token=:token AND x.expires_at>:now AND u.role='superadmin'"""),{"token":original,"now":now_utc()}).first()
+    if not row: raise HTTPException(401,"Сессия создателя недействительна")
+    response.set_cookie(COOKIE,original,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=2592000)
+    response.delete_cookie("salonos_superadmin_return")
+    return {"ok":True}
 
 @app.get("/api/superadmin/salons")
 def superadmin_salons(request:Request):
