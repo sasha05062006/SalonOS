@@ -22,7 +22,7 @@ function toastMsg(s){toast.textContent=s;toast.classList.remove("hidden");setTim
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
 function themeClass(t){return ["light","dark","soft","modern"].includes(t)?t:"light"}
 function publicUrl(){return location.pathname.match(/^\\/s\\/([^/]+)/)?.[1]}
-async async function boot(){
+async function boot(){
   const slug=publicUrl();
   try{
     if(slug){await renderPublic(slug);return}
