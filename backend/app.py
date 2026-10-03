@@ -110,6 +110,10 @@ async def lifespan(app: FastAPI):
 
 app=FastAPI(title="SalonOS API",version="1.0.0",lifespan=lifespan)
 
+@app.get("/", include_in_schema=False)
+def root():
+    return FileResponse(BASE_DIR/"frontend"/"index.html")
+
 
 @app.get("/assets/{path:path}")
 def assets(path:str):
