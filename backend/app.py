@@ -77,9 +77,29 @@ class AppointmentUpdateIn(BaseModel):
     master_id: str; service_id: str; start_at: str; client_name: str=Field(min_length=2,max_length=160)
     client_phone: str=Field(min_length=7,max_length=40); status: str="confirmed"
 
+def ensure_superadmin():
+    email=os.getenv("SUPERADMIN_EMAIL","").strip().lower()
+    password=os.getenv("SUPERADMIN_PASSWORD","")
+    name=os.getenv("SUPERADMIN_NAME","SalonOS")
+    if not email or not password:
+        return
+    if len(password)<6:
+        raise RuntimeError("SUPERADMIN_PASSWORD must contain at least 6 characters")
+    with get_engine().begin() as conn:
+        existing=conn.execute(text("SELECT id,role FROM users WHERE lower(email)=:email"),{"email":email}).first()
+        if existing:
+            return
+        sid=uid()
+        conn.execute(text("""INSERT INTO salons(id,slug,name,description,is_active) VALUES(:id,:slug,:name,:description,TRUE)"""),
+                     {"id":sid,"slug":"salonos-control","name":"SalonOS Control","description":"System account for SalonOS superadmin"})
+        conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role,is_active) VALUES(:id,:sid,:name,:email,:hash,'superadmin',TRUE)"""),
+                     {"id":uid(),"sid":sid,"name":name,"email":email,"hash":hash_password(password)})
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db(); yield
+    init_db()
+    ensure_superadmin()
+    yield
 
 app=FastAPI(title="SalonOS API",version="1.0.0",lifespan=lifespan)
 
@@ -99,7 +119,7 @@ def auth_user(request: Request):
         row=conn.execute(text("""SELECT u.*,s.is_active salon_active,s.name salon_name,s.slug salon_slug
           FROM sessions x JOIN users u ON u.id=x.user_id JOIN salons s ON s.id=u.salon_id
           WHERE x.token=:token AND x.expires_at>:now AND u.is_active=TRUE"""),{"token":token,"now":now_utc()}).first()
-    if not row or not row.salon_active: raise HTTPException(401,"Сессия недействительна")
+    if not row or (row.role!="superadmin" and not row.salon_active): raise HTTPException(401,"Сессия недействительна")
     return rowdict(row)
 
 def require_role(request:Request,*roles):
@@ -436,7 +456,7 @@ def admin_clients(request:Request):
 def superadmin_salons(request:Request):
     u=auth_user(request)
     if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
-    with get_engine().begin() as conn: rows=conn.execute(text("SELECT id,slug,name,phone,is_active,created_at FROM salons ORDER BY created_at DESC")).fetchall()
+    with get_engine().begin() as conn: rows=conn.execute(text("SELECT id,slug,name,phone,is_active,created_at FROM salons WHERE slug<>'salonos-control' ORDER BY created_at DESC")).fetchall()
     return [rowdict(x) for x in rows]
 
 @app.patch("/api/superadmin/salons/{salon_id}")
