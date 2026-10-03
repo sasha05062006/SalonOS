@@ -64,6 +64,6 @@ async function loadSlots(){const box=$("#slotBox");if(!box)return;box.textConten
 function nextBooking(){if(bookingStep===1&&!selectedService)return toastMsg("Выберите услугу");if(bookingStep===2&&!selectedMaster)return toastMsg("Выберите мастера");if(bookingStep===3&&!window.selectedSlot)return toastMsg("Выберите время");bookingStep++;renderBooking()}
 async function submitBooking(){if(!$("#bn").value||!$("#bp").value)return toastMsg("Заполните имя и телефон");const start=bookingDate+"T"+window.selectedSlot+":00";try{const r=await api("/api/public/"+salon.slug+"/appointments",{method:"POST",body:JSON.stringify({master_id:selectedMaster.id,service_id:selectedService.id,start_at:start,client_name:$("#bn").value,client_phone:$("#bp").value})});modal.innerHTML='<div class="modalbox" style="text-align:center"><div class="logo" style="margin:auto">✓</div><h2>Запись подтверждена</h2><p class="muted">'+esc(r.service)+' · '+esc(r.master)+'</p><p>'+new Date(r.start_at).toLocaleString("ru-RU",{dateStyle:"long",timeStyle:"short"})+'</p><button class="btn" onclick="closeModal()">Готово</button></div>'}catch(e){toastMsg(e.message)}}
 boot();
-
+if("serviceWorker" in navigator){navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(x=>x.unregister()));if("caches" in window)caches.keys().then(ks=>ks.forEach(k=>caches.delete(k)));}
 
 </script></body></html>
