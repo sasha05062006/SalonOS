@@ -15,6 +15,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 COOKIE = "salonos_session"
 STATUSES = {"confirmed", "completed", "cancelled", "no_show"}
 THEMES = {"light", "dark", "soft", "modern"}
+PLANS = {
+    "START": {"name":"START","price":49000,"features":["Сайт салона","Онлайн-запись","Услуги","Расписание","До 2 мастеров"]},
+    "PRO": {"name":"PRO","price":99000,"features":["Всё из START","Неограниченные мастера","Клиенты","История записей","Telegram-уведомления","Расширенные настройки"]},
+    "BUSINESS": {"name":"BUSINESS","price":199000,"features":["Всё из PRO","Расширенные роли","Расширенная аналитика","Приоритетная поддержка"]}
+}
+SUBSCRIPTION_STATUSES = {"NONE","PENDING_PAYMENT","ACTIVE","EXPIRED","CANCELLED"}
 
 def uid() -> str: return secrets.token_urlsafe(12)
 
