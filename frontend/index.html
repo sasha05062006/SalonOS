@@ -24,9 +24,13 @@ function themeClass(t){return ["light","dark","soft","modern"].includes(t)?t:"li
 function publicUrl(){return location.pathname.match(/^\\/s\\/([^/]+)/)?.[1]}
 async async function boot(){
   const slug=publicUrl();
-  if(slug){return renderPublic(slug)}
-  try{me=await api("/api/me");return renderAdmin()}
-  catch{renderLanding()}
+  try{
+    if(slug){await renderPublic(slug);return}
+    me=await api("/api/me");
+    await renderAdmin();
+  }catch(e){
+    try{renderLanding()}catch(err){console.error("SalonOS boot failed",err);document.getElementById("app").innerHTML='<div class="wrap"><div class="card"><h2>SalonOS</h2><p class="muted">Не удалось загрузить интерфейс.</p></div></div>'}
+  }
 }
 function renderLanding(){app.innerHTML='<div class="wrap"><div class="top"><div class="brand"><div class="logo">S</div>SalonOS</div></div><section class="hero"><h1>Онлайн-запись, которую можно запустить за несколько минут.</h1><p>Свой салон, мастера, услуги, расписание и публичная страница — без программирования.</p><div class="row"><button class="btn" onclick="openAuth(\'register\')">Создать салон</button><button class="btn ghost" onclick="openAuth(\'login\')">Войти</button></div></section><div class="grid"><div class="card"><b>Онлайн-запись</b><p class="muted">Клиент сам выбирает услугу, мастера и свободное время.</p></div><div class="card"><b>4 дизайна</b><p class="muted">Light, Dark, Soft и Modern — салон выбирает свой стиль.</p></div><div class="card"><b>Управление</b><p class="muted">Записи, мастера, услуги, клиенты и расписание.</p></div></div></div>'}
 function openAuth(mode){modal.classList.remove("hidden");modal.innerHTML='<div class="modalbox"><div class="top"><h2>'+(mode==="login"?"Вход":"Создание салона")+'</h2><button class="btn ghost small" onclick="closeModal()">Закрыть</button></div><form onsubmit="auth(event,\''+mode+'\')">'+(mode==="register"?'<label>Ваше имя</label><input id="an" required minlength="2"><label>Название салона</label><input id="sn" required minlength="2">':'')+'<label>Email</label><input id="ae" type="email" required><label>Пароль</label><input id="ap" type="password" required minlength="6"><button class="btn" style="width:100%;margin-top:18px">'+(mode==="login"?"Войти":"Создать салон")+'</button></form></div>'}
