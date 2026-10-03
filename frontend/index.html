@@ -144,5 +144,4 @@ async function submitBooking(){if(!$("#bn").value||!$("#bp").value)return toastM
 boot();
 if("serviceWorker" in navigator){navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(x=>x.unregister()));if("caches" in window)caches.keys().then(ks=>ks.forEach(k=>caches.delete(k)));}
 
-</script></body></htmlasync function appointmentsPage(m){const rows=await api("/api/admin/appointments");m.innerHTML='<div class="top"><div><h1>Записи</h1><p class="muted">Ближайшие записи и новые заявки.</p></div></div><div class="card">'+(rows.length?rows.map(a=>appointmentHtml(a)+(me.role==="master"?"":'<div class="row" style="margin-bottom:12px">'+(a.status==="pending"?'<button class="btn small" onclick="setStatus(\''+a.id+'\',\'confirmed\')">Подтвердить</button><button class="btn danger small" onclick="setStatus(\''+a.id+'\',\'cancelled\')">Отклонить</button>':(a.status==="confirmed"?'<button class="btn small" onclick="setStatus(\''+a.id+'\',\'completed\')">Завершить</button><button class="btn danger small" onclick="setStatus(\''+a.id+'\',\'cancelled\')">Отменить</button>':''))+'</div>')).join(""):'<p class="muted">Записей нет.</p>')+'</div>'}
-</script></body></html>
+</script></body></html</script></body></html>
