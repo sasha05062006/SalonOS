@@ -137,7 +137,7 @@ def login(payload:LoginIn,response:Response):
     response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=False,max_age=2592000); return {"ok":True}
 
 @app.post("/api/auth/master")
-def create_master_login(payload:MasterRegisterIn,request:Request,response:Response):
+def create_master_login(payload:MasterRegisterIn,request:Request):
     u=require_role(request,"admin")
     email=payload.email.strip().lower()
     with get_engine().begin() as conn:
@@ -146,10 +146,7 @@ def create_master_login(payload:MasterRegisterIn,request:Request,response:Respon
         if conn.execute(text("SELECT 1 FROM users WHERE lower(email)=:email"),{"email":email}).first(): raise HTTPException(409,"Этот email уже используется")
         uid_=uid()
         conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role,master_id) VALUES(:id,:sid,:name,:email,:hash,'master',:master_id)"""),{"id":uid_,"sid":u["salon_id"],"name":master.name,"email":email,"hash":hash_password(payload.password),"master_id":master.id})
-    token=secrets.token_urlsafe(48)
-    with get_engine().begin() as conn: conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":uid_,"exp":now_utc()+timedelta(days=30)})
-    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=False,max_age=2592000)
-    return {"ok":True}
+    return {"ok":True,"master_id":master.id}
 
 @app.post("/api/auth/logout")
 def logout(request:Request,response:Response):
