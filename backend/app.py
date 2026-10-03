@@ -381,7 +381,7 @@ def public_slots(slug:str,service_id:str,master_id:str,day:str):
     except ValueError: raise HTTPException(400,"Неверная дата")
     if d<datetime.now(ZoneInfo("Asia/Tashkent")).date(): return {"slots":[]}
     with get_engine().begin() as conn:
-        salon=conn.execute(text("SELECT id FROM salons WHERE slug=:slug AND is_active=TRUE AND status='ACTIVE'"),{"slug":slug}).first()
+        salon=conn.execute(text("SELECT s.id FROM salons s JOIN subscriptions sub ON sub.salon_id=s.id WHERE s.slug=:slug AND s.is_active=TRUE AND sub.status IN ('ACTIVE','TRIAL') AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)"),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         if not conn.execute(text("""SELECT 1 FROM masters m JOIN services s ON s.salon_id=m.salon_id WHERE m.id=:m AND s.id=:s AND m.salon_id=:sid"""),{"m":master_id,"s":service_id,"sid":salon.id}).first(): return {"slots":[]}
         return {"slots":availability_for(conn,master_id,service_id,d)}
@@ -391,7 +391,7 @@ def public_appointment(slug:str,payload:AppointmentIn):
     start=parse_dt(payload.start_at)
     if start<now_utc(): raise HTTPException(400,"Нельзя записаться в прошлое")
     with get_engine().begin() as conn:
-        salon=conn.execute(text("SELECT * FROM salons WHERE slug=:slug AND is_active=TRUE AND status='ACTIVE'"),{"slug":slug}).first()
+        salon=conn.execute(text("SELECT s.* FROM salons s JOIN subscriptions sub ON sub.salon_id=s.id WHERE s.slug=:slug AND s.is_active=TRUE AND sub.status IN ('ACTIVE','TRIAL') AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)"),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.master_id,"sid":salon.id}).first()
         service=conn.execute(text("SELECT * FROM services WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.service_id,"sid":salon.id}).first()
