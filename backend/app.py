@@ -120,6 +120,15 @@ def assets(path:str):
     target=BASE_DIR/"frontend"/path
     if not target.is_file(): raise HTTPException(404,"Asset not found")
     return FileResponse(target)
+\n@app.get("/admin", include_in_schema=False)
+@app.get("/admin/", include_in_schema=False)
+def admin_page():
+    return FileResponse(BASE_DIR/"frontend"/"index.html")
+
+@app.get("/s/{slug}", include_in_schema=False)
+@app.get("/s/{slug}/", include_in_schema=False)
+def salon_page(slug: str):
+    return FileResponse(BASE_DIR/"frontend"/"index.html")
 _cors=[x.strip() for x in os.getenv("CORS_ORIGINS","*").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware,allow_origins=_cors,allow_credentials=(_cors!=["*"]),allow_methods=["*"],allow_headers=["*"])
 
