@@ -250,6 +250,10 @@ def request_subscription(request:Request,plan:str="PRO"):
           ON CONFLICT(salon_id) DO UPDATE SET plan=:plan,status='PENDING_PAYMENT',price=:price,updated_at=CURRENT_TIMESTAMP"""),
           {"id":uid(),"sid":u["salon_id"],"plan":plan,"price":PLANS[plan]["price"]})
         conn.execute(text("UPDATE salons SET status='PENDING_PAYMENT' WHERE id=:sid"),{"sid":u["salon_id"]})
+        if plan=="BUSINESS":
+            conn.execute(text("UPDATE users SET role='manager' WHERE salon_id=:sid AND role='admin' AND is_active=TRUE"),{"sid":u["salon_id"]})
+        else:
+            conn.execute(text("UPDATE users SET role='admin' WHERE salon_id=:sid AND role='manager' AND is_active=TRUE"),{"sid":u["salon_id"]})
     return {"ok":True,"status":"PENDING_PAYMENT","plan":plan,"price":PLANS[plan]["price"]}
 
 @app.put("/api/admin/salon")
@@ -552,4 +556,147 @@ def toggle_team_user(user_id:str,request:Request,active:bool):
 class SupportMessageIn(BaseModel):
     body: str = Field(min_length=1,max_length=4000)
 
-class AnnouncementIn(BaseModel):
+class AnnouncementIn(BaseModel): title: str=Field(min_length=1,max_length=180); body: str=Field(min_length=1,max_length=10000); kind: str="info"; salon_id: str|None=None; days: int=Field(default=14,ge=1,le=365); starts_at: str|None=None
+
+
+def require_superadmin(request:Request):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Требуются права SuperAdmin")
+    return u
+
+@app.get("/api/superadmin/salons")
+def superadmin_salons(request:Request):
+    require_superadmin(request)
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT s.*,sub.plan,sub.status subscription_status,sub.price,sub.currency,sub.started_at,sub.expires_at
+          FROM salons s LEFT JOIN subscriptions sub ON sub.salon_id=s.id
+          WHERE s.slug<>'salonos-control' ORDER BY s.created_at DESC""")).fetchall()
+    return [rowdict(x) for x in rows]
+
+@app.patch("/api/superadmin/salons/{salon_id}")
+def superadmin_toggle_salon(salon_id:str,request:Request,active:bool):
+    require_superadmin(request)
+    with get_engine().begin() as conn:
+        row=conn.execute(text("SELECT id FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":salon_id}).first()
+        if not row: raise HTTPException(404,"Салон не найден")
+        conn.execute(text("UPDATE salons SET is_active=:active,status=:status WHERE id=:sid"),{"active":active,"status":"ACTIVE" if active else "BLOCKED","sid":salon_id})
+    return {"ok":True}
+
+@app.post("/api/superadmin/salons/{salon_id}/trial")
+def superadmin_trial(salon_id:str,request:Request,days:int=7,plan:str="PRO"):
+    require_superadmin(request)
+    if days<1 or days>90 or plan.upper() not in PLANS: raise HTTPException(400,"Некорректный trial")
+    plan=plan.upper()
+    with get_engine().begin() as conn:
+        row=conn.execute(text("SELECT id FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":salon_id}).first()
+        if not row: raise HTTPException(404,"Салон не найден")
+        now=now_utc(); expires=now+timedelta(days=days)
+        conn.execute(text("""INSERT INTO subscriptions(id,salon_id,plan,status,price,currency,started_at,expires_at)
+          VALUES(:id,:sid,:plan,'TRIAL',:price,'UZS',:started,:expires)
+          ON CONFLICT(salon_id) DO UPDATE SET plan=:plan,status='TRIAL',price=:price,started_at=:started,expires_at=:expires,updated_at=CURRENT_TIMESTAMP"""),
+          {"id":uid(),"sid":salon_id,"plan":plan,"price":PLANS[plan]["price"],"started":now,"expires":expires})
+        conn.execute(text("UPDATE salons SET is_active=TRUE,status='ACTIVE' WHERE id=:sid"),{"sid":salon_id})
+        if plan=="BUSINESS":
+            first=conn.execute(text("SELECT id FROM users WHERE salon_id=:sid AND role IN ('admin','manager') AND is_active=TRUE ORDER BY created_at LIMIT 1"),{"sid":salon_id}).first()
+            if first: conn.execute(text("UPDATE users SET role='manager' WHERE id=:uid"),{"uid":first.id})
+        else:
+            conn.execute(text("UPDATE users SET role='admin' WHERE salon_id=:sid AND role='manager' AND is_active=TRUE"),{"sid":salon_id})
+    return {"ok":True,"status":"TRIAL","plan":plan,"expires_at":expires.isoformat()}
+
+@app.post("/api/superadmin/salons/{salon_id}/enter")
+def superadmin_enter_salon(salon_id:str,request:Request,response:Response):
+    su=require_superadmin(request)
+    with get_engine().begin() as conn:
+        target=conn.execute(text("SELECT id FROM users WHERE salon_id=:sid AND role IN ('manager','admin') AND is_active=TRUE ORDER BY CASE WHEN role='manager' THEN 0 ELSE 1 END,created_at LIMIT 1"),{"sid":salon_id}).first()
+        if not target: raise HTTPException(404,"В салоне нет активного администратора")
+        token=secrets.token_urlsafe(48)
+        conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":target.id,"exp":now_utc()+timedelta(hours=4)})
+    old=request.cookies.get(COOKIE)
+    response.set_cookie("salonos_superadmin_return",old or "",httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=14400)
+    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=14400)
+    return {"ok":True}
+
+@app.post("/api/superadmin/exit-salon")
+def superadmin_exit_salon(request:Request,response:Response):
+    token=request.cookies.get("salonos_superadmin_return")
+    if not token: raise HTTPException(400,"Нет активного режима поддержки")
+    with get_engine().begin() as conn:
+        conn.execute(text("DELETE FROM sessions WHERE token=:token"),{"token":request.cookies.get(COOKIE)})
+        row=conn.execute(text("SELECT id FROM users WHERE EXISTS (SELECT 1 FROM sessions WHERE token=:token AND user_id=users.id) AND role='superadmin'"),{"token":token}).first()
+        if not row: raise HTTPException(401,"Исходная сессия недействительна")
+    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=2592000)
+    response.delete_cookie("salonos_superadmin_return")
+    return {"ok":True}
+
+@app.get("/api/superadmin/support")
+def superadmin_support(request:Request,salon_id:str):
+    require_superadmin(request)
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT sm.*,s.name salon_name FROM support_messages sm JOIN salons s ON s.id=sm.salon_id
+          WHERE sm.salon_id=:sid ORDER BY sm.created_at"""),{"sid":salon_id}).fetchall()
+        conn.execute(text("UPDATE support_messages SET is_read=TRUE WHERE salon_id=:sid AND sender_role<>'superadmin'"),{"sid":salon_id})
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/superadmin/support/{salon_id}")
+def superadmin_support_send(salon_id:str,payload:SupportMessageIn,request:Request):
+    su=require_superadmin(request)
+    with get_engine().begin() as conn:
+        if not conn.execute(text("SELECT 1 FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":salon_id}).first(): raise HTTPException(404,"Салон не найден")
+        conn.execute(text("""INSERT INTO support_messages(id,salon_id,sender_role,sender_user_id,body,is_read)
+          VALUES(:id,:sid,'superadmin',:uid,:body,FALSE)"""),{"id":uid(),"sid":salon_id,"uid":su["id"],"body":payload.body.strip()})
+    return {"ok":True}
+
+@app.get("/api/superadmin/announcements")
+def superadmin_announcements(request:Request):
+    require_superadmin(request)
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT a.*,s.name salon_name FROM announcements a LEFT JOIN salons s ON s.id=a.salon_id
+          ORDER BY a.created_at DESC""")).fetchall()
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/superadmin/announcements")
+def superadmin_create_announcement(payload:AnnouncementIn,request:Request):
+    require_superadmin(request)
+    starts=parse_dt(payload.starts_at) if payload.starts_at else now_utc()
+    ends=starts+timedelta(days=max(1,payload.days))
+    with get_engine().begin() as conn:
+        if payload.salon_id and not conn.execute(text("SELECT 1 FROM salons WHERE id=:sid"),{"sid":payload.salon_id}).first(): raise HTTPException(404,"Салон не найден")
+        conn.execute(text("""INSERT INTO announcements(id,salon_id,title,body,kind,is_active,starts_at,ends_at)
+          VALUES(:id,:sid,:title,:body,:kind,TRUE,:starts,:ends)"""),{"id":uid(),"sid":payload.salon_id,"title":payload.title.strip(),"body":payload.body.strip(),"kind":payload.kind,"starts":starts,"ends":ends})
+    return {"ok":True}
+
+@app.patch("/api/superadmin/announcements/{announcement_id}")
+def superadmin_toggle_announcement(announcement_id:str,request:Request,active:bool):
+    require_superadmin(request)
+    with get_engine().begin() as conn:
+        conn.execute(text("UPDATE announcements SET is_active=:active WHERE id=:id"),{"active":active,"id":announcement_id})
+    return {"ok":True}
+
+@app.get("/api/admin/support")
+def admin_support(request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("SELECT * FROM support_messages WHERE salon_id=:sid ORDER BY created_at"),{"sid":u["salon_id"]}).fetchall()
+        conn.execute(text("UPDATE support_messages SET is_read=TRUE WHERE salon_id=:sid AND sender_role='superadmin'"),{"sid":u["salon_id"]})
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/admin/support")
+def admin_support_send(payload:SupportMessageIn,request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        conn.execute(text("""INSERT INTO support_messages(id,salon_id,sender_role,sender_user_id,body,is_read)
+          VALUES(:id,:sid,:role,:uid,:body,FALSE)"""),{"id":uid(),"sid":u["salon_id"],"role":u["role"],"uid":u["id"],"body":payload.body.strip()})
+    return {"ok":True}
+
+@app.get("/api/admin/notifications")
+def admin_notifications(request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT * FROM announcements
+          WHERE (salon_id=:sid OR salon_id IS NULL) AND is_active=TRUE
+          AND (starts_at IS NULL OR starts_at<=CURRENT_TIMESTAMP)
+          AND (ends_at IS NULL OR ends_at>CURRENT_TIMESTAMP)
+          ORDER BY created_at DESC"""),{"sid":u["salon_id"]}).fetchall()
+        unread=conn.execute(text("SELECT COUNT(*) FROM support_messages WHERE salon_id=:sid AND sender_role='superadmin' AND is_read=FALSE"),{"sid":u["salon_id"]}).scalar_one()
+    return {"announcements":[rowdict(x) for x in rows],"unread_support":unread}
+
