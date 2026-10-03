@@ -1,0 +1,21 @@
+name: syntax-check
+on:
+  push:
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Extract and check frontend JavaScript
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("frontend/index.html").read_text(encoding="utf-8")
+          a=s.index("<script>")+8
+          b=s.rindex("</script>")
+          Path("/tmp/salonos.js").write_text(s[a:b],encoding="utf-8")
+          PY
+          node --check /tmp/salonos.js
