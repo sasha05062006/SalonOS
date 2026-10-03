@@ -352,6 +352,22 @@ def public_appointment(slug:str,payload:AppointmentIn):
     send_telegram(f"🔔 Новая запись в {salon.name}\\n{result['client_name']}\\n{result['service']} — {result['master']}\\n{start.strftime('%d.%m.%Y %H:%M')}\\n{result['price']:,} сум".replace(","," "))
     return result
 
+@app.get("/api/admin/schedules/{master_id}/exceptions")
+def list_exceptions(master_id:str,request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        if not conn.execute(text("SELECT 1 FROM masters WHERE id=:id AND salon_id=:sid"),{"id":master_id,"sid":u["salon_id"]}).first():
+            raise HTTPException(404,"Мастер не найден")
+        rows=conn.execute(text("SELECT * FROM schedule_exceptions WHERE master_id=:id ORDER BY date"),{"id":master_id}).fetchall()
+    return [rowdict(x) for x in rows]
+
+@app.delete("/api/admin/schedules/{master_id}/exceptions/{exception_id}")
+def delete_exception(master_id:str,exception_id:str,request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        conn.execute(text("DELETE FROM schedule_exceptions WHERE id=:id AND master_id=:mid AND master_id IN (SELECT id FROM masters WHERE salon_id=:sid)"),{"id":exception_id,"mid":master_id,"sid":u["salon_id"]})
+    return {"ok":True}
+
 @app.get("/api/admin/appointments")
 def admin_appointments(request:Request,day:str|None=None,status:str|None=None,master_id:str|None=None):
     u=require_role(request,"admin","master")
