@@ -20,7 +20,7 @@ PLANS = {
     "PRO": {"name":"PRO","price":99000,"features":["Всё из START","Неограниченные мастера","Клиенты","История записей","Telegram-уведомления","Расширенные настройки"]},
     "BUSINESS": {"name":"BUSINESS","price":199000,"features":["Всё из PRO","Расширенные роли","Расширенная аналитика","Приоритетная поддержка"]}
 }
-SUBSCRIPTION_STATUSES = {"NONE","PENDING_PAYMENT","ACTIVE","EXPIRED","CANCELLED"}
+SUBSCRIPTION_STATUSES = {"NONE","PENDING_PAYMENT","TRIAL","ACTIVE","EXPIRED","CANCELLED"}
 
 def uid() -> str: return secrets.token_urlsafe(12)
 
@@ -367,7 +367,7 @@ def availability_for(conn,master_id:str,service_id:str,day:date):
 @app.get("/api/public/{slug}")
 def public_salon(slug:str):
     with get_engine().begin() as conn:
-        salon=conn.execute(text("""SELECT id,slug,name,description,logo_url,phone,address,timezone,theme,accent_color FROM salons WHERE slug=:slug AND is_active=TRUE AND status='ACTIVE'"""),{"slug":slug}).first()
+        salon=conn.execute(text("""SELECT id,slug,name,description,logo_url,phone,address,timezone,theme,accent_color FROM salons WHERE slug=:slug AND is_active=TRUE AND status IN ('ACTIVE','TRIAL')"""),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         sid=salon.id
         sr=conn.execute(text("SELECT id,name,description,price,duration_minutes FROM services WHERE salon_id=:sid AND is_active=TRUE ORDER BY name"),{"sid":sid}).fetchall()
@@ -486,6 +486,131 @@ def admin_clients(request:Request):
         rows=conn.execute(text("""SELECT c.*,COUNT(a.id) appointments_count FROM clients c LEFT JOIN appointments a ON a.client_id=c.id
           WHERE c.salon_id=:sid GROUP BY c.id ORDER BY c.updated_at DESC"""),{"sid":u["salon_id"]}).fetchall()
     return [rowdict(x) for x in rows]
+
+class SupportMessageIn(BaseModel):
+    body: str = Field(min_length=1,max_length=4000)
+
+class AnnouncementIn(BaseModel):
+    title: str = Field(min_length=2,max_length=180)
+    body: str = Field(min_length=1,max_length=5000)
+    kind: str = "info"
+    salon_id: str|None = None
+    days: int|None = None
+
+@app.get("/api/admin/notifications")
+def admin_notifications(request:Request):
+    u=require_role(request,"admin","master")
+    with get_engine().begin() as conn:
+        anns=conn.execute(text("""SELECT id,title,body,kind,created_at,starts_at,ends_at
+          FROM announcements WHERE is_active=TRUE AND (salon_id IS NULL OR salon_id=:sid)
+          AND (starts_at IS NULL OR starts_at<=CURRENT_TIMESTAMP)
+          AND (ends_at IS NULL OR ends_at>CURRENT_TIMESTAMP)
+          ORDER BY created_at DESC LIMIT 30"""),{"sid":u["salon_id"]}).fetchall()
+        unread=conn.execute(text("SELECT COUNT(*) FROM support_messages WHERE salon_id=:sid AND sender_role='superadmin' AND is_read=FALSE"),{"sid":u["salon_id"]}).scalar_one()
+    return {"announcements":[rowdict(x) for x in anns],"unread_support":int(unread or 0)}
+
+@app.post("/api/admin/notifications/{notification_id}/read")
+def read_notification(notification_id:str,request:Request):
+    u=require_role(request,"admin","master")
+    with get_engine().begin() as conn:
+        conn.execute(text("UPDATE announcements SET is_active=is_active WHERE id=:id AND (salon_id IS NULL OR salon_id=:sid)"),{"id":notification_id,"sid":u["salon_id"]})
+    return {"ok":True}
+
+@app.get("/api/admin/support")
+def admin_support(request:Request):
+    u=require_role(request,"admin","master")
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT id,sender_role,sender_user_id,body,is_read,created_at
+          FROM support_messages WHERE salon_id=:sid ORDER BY created_at ASC LIMIT 200"""),{"sid":u["salon_id"]}).fetchall()
+        conn.execute(text("UPDATE support_messages SET is_read=TRUE WHERE salon_id=:sid AND sender_role='superadmin'"),{"sid":u["salon_id"]})
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/admin/support")
+def admin_support_send(payload:SupportMessageIn,request:Request):
+    u=require_role(request,"admin","master")
+    with get_engine().begin() as conn:
+        mid=uid()
+        conn.execute(text("""INSERT INTO support_messages(id,salon_id,sender_role,sender_user_id,body)
+          VALUES(:id,:sid,:role,:uid,:body)"""),{"id":mid,"sid":u["salon_id"],"role":u["role"],"uid":u["id"],"body":payload.body.strip()})
+        salon=conn.execute(text("SELECT name FROM salons WHERE id=:sid"),{"sid":u["salon_id"]}).first()
+    send_telegram(f"💬 Новое сообщение поддержки — {salon.name}\n{payload.body.strip()}")
+    return {"ok":True,"id":mid}
+
+@app.get("/api/superadmin/support")
+def superadmin_support(request:Request,salon_id:str|None=None):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    with get_engine().begin() as conn:
+        clauses=["1=1"]; params={}
+        if salon_id: clauses.append("m.salon_id=:sid"); params["sid"]=salon_id
+        rows=conn.execute(text("""SELECT m.id,m.salon_id,m.sender_role,m.sender_user_id,m.body,m.is_read,m.created_at,s.name salon_name
+          FROM support_messages m JOIN salons s ON s.id=m.salon_id WHERE """+" AND ".join(clauses)+""" ORDER BY m.created_at ASC LIMIT 500"""),params).fetchall()
+        if salon_id:
+            conn.execute(text("UPDATE support_messages SET is_read=TRUE WHERE salon_id=:sid AND sender_role<>'superadmin'"),{"sid":salon_id})
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/superadmin/support/{salon_id}")
+def superadmin_support_send(salon_id:str,payload:SupportMessageIn,request:Request):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    with get_engine().begin() as conn:
+        if not conn.execute(text("SELECT 1 FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":salon_id}).first(): raise HTTPException(404,"Салон не найден")
+        mid=uid()
+        conn.execute(text("""INSERT INTO support_messages(id,salon_id,sender_role,sender_user_id,body,is_read)
+          VALUES(:id,:sid,'superadmin',:uid,:body,TRUE)"""),{"id":mid,"sid":salon_id,"uid":u["id"],"body":payload.body.strip()})
+    return {"ok":True,"id":mid}
+
+@app.post("/api/superadmin/announcements")
+def superadmin_announcement(payload:AnnouncementIn,request:Request):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    kind=payload.kind if payload.kind in {"info","success","warning","critical","update"} else "info"
+    if payload.days is not None and (payload.days<1 or payload.days>365): raise HTTPException(400,"Некорректный срок")
+    ends=now_utc()+timedelta(days=payload.days) if payload.days else None
+    with get_engine().begin() as conn:
+        if payload.salon_id and not conn.execute(text("SELECT 1 FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":payload.salon_id}).first(): raise HTTPException(404,"Салон не найден")
+        aid=uid()
+        conn.execute(text("""INSERT INTO announcements(id,salon_id,title,body,kind,is_active,starts_at,ends_at)
+          VALUES(:id,:sid,:title,:body,:kind,TRUE,CURRENT_TIMESTAMP,:ends)"""),{"id":aid,"sid":payload.salon_id,"title":payload.title.strip(),"body":payload.body.strip(),"kind":kind,"ends":ends})
+    return {"ok":True,"id":aid}
+
+@app.get("/api/superadmin/announcements")
+def superadmin_announcements(request:Request):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT a.*,s.name salon_name FROM announcements a
+          LEFT JOIN salons s ON s.id=a.salon_id ORDER BY a.created_at DESC LIMIT 100""")).fetchall()
+    return [rowdict(x) for x in rows]
+
+@app.patch("/api/superadmin/announcements/{announcement_id}")
+def superadmin_announcement_toggle(announcement_id:str,request:Request,active:bool):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    with get_engine().begin() as conn:
+        r=conn.execute(text("UPDATE announcements SET is_active=:active WHERE id=:id"),{"active":active,"id":announcement_id})
+        if r.rowcount==0: raise HTTPException(404,"Уведомление не найдено")
+    return {"ok":True}
+
+@app.post("/api/superadmin/salons/{salon_id}/trial")
+def superadmin_trial(salon_id:str,request:Request,days:int=7,plan:str="PRO"):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    plan=plan.upper()
+    if plan not in PLANS: raise HTTPException(400,"Неизвестный тариф")
+    if days<1 or days>90: raise HTTPException(400,"Срок trial должен быть от 1 до 90 дней")
+    started=now_utc(); expires=started+timedelta(days=days)
+    with get_engine().begin() as conn:
+        if not conn.execute(text("SELECT 1 FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":salon_id}).first(): raise HTTPException(404,"Салон не найден")
+        existing=conn.execute(text("SELECT id FROM subscriptions WHERE salon_id=:sid"),{"sid":salon_id}).first()
+        params={"id":uid(),"sid":salon_id,"plan":plan,"price":PLANS[plan]["price"],"started":started,"expires":expires}
+        if existing:
+            conn.execute(text("""UPDATE subscriptions SET plan=:plan,status='TRIAL',price=:price,started_at=:started,expires_at=:expires,updated_at=:started WHERE salon_id=:sid"""),params)
+        else:
+            conn.execute(text("""INSERT INTO subscriptions(id,salon_id,plan,status,price,currency,started_at,expires_at)
+              VALUES(:id,:sid,:plan,'TRIAL',:price,'UZS',:started,:expires)"""),params)
+        conn.execute(text("UPDATE salons SET is_active=TRUE,status='ACTIVE' WHERE id=:sid"),{"sid":salon_id})
+    return {"ok":True,"status":"TRIAL","plan":plan,"days":days,"expires_at":expires.isoformat()}
 
 @app.get("/api/superadmin/salons")
 def superadmin_salons(request:Request):
