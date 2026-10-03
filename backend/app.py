@@ -509,6 +509,8 @@ def public_salon(slug:str):
         sr=conn.execute(text("SELECT id,name,description,price,duration_minutes FROM services WHERE salon_id=:sid AND is_active=TRUE ORDER BY name"),{"sid":sid}).fetchall()
         mr=conn.execute(text("SELECT id,name,photo_url,description FROM masters WHERE salon_id=:sid AND is_active=TRUE ORDER BY name"),{"sid":sid}).fetchall()
         links=conn.execute(text("""SELECT ms.master_id,ms.service_id FROM master_services ms JOIN masters m ON m.id=ms.master_id JOIN services s ON s.id=ms.service_id WHERE m.salon_id=:sid AND m.is_active=TRUE AND s.is_active=TRUE"""),{"sid":sid}).fetchall()
+        if not links:
+            links=[(m.id,sv.id) for m in mr for sv in sr]
     return {**rowdict(salon),"services":[rowdict(x) for x in sr],"masters":[rowdict(x) for x in mr],"master_services":[{"master_id":x[0],"service_id":x[1]} for x in links]}
 
 @app.get("/api/public/{slug}/slots")
