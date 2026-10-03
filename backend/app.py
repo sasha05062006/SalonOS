@@ -479,10 +479,16 @@ def add_exception(master_id:str,payload:ExceptionIn,request:Request):
         else: conn.execute(text("""INSERT INTO schedule_exceptions(id,master_id,date,start_time,end_time,is_day_off) VALUES(:id,:mid,:date,:start,:end,:off)"""),{**p,"id":uid()})
     return {"ok":True}
 
+def master_service_is_allowed(conn,master_id:str,service_id:str,salon_id:str):
+    total=conn.execute(text("SELECT COUNT(*) FROM master_services ms JOIN masters m ON m.id=ms.master_id WHERE m.salon_id=:sid"),{"sid":salon_id}).scalar_one()
+    if total==0:
+        return bool(conn.execute(text("SELECT 1 FROM masters WHERE id=:mid AND salon_id=:sid AND is_active=TRUE"),{"mid":master_id,"sid":salon_id}).first())
+    return bool(conn.execute(text("SELECT 1 FROM master_services ms JOIN masters m ON m.id=ms.master_id WHERE ms.master_id=:m AND ms.service_id=:s AND m.salon_id=:sid"),{"m":master_id,"s":service_id,"sid":salon_id}).first())
+
 def availability_for(conn,master_id:str,service_id:str,day:date):
     master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND is_active=TRUE"),{"id":master_id}).first()
     service=conn.execute(text("SELECT * FROM services WHERE id=:id AND is_active=TRUE"),{"id":service_id}).first()
-    if not master or not service or not conn.execute(text("SELECT 1 FROM master_services WHERE master_id=:m AND service_id=:s"),{"m":master_id,"s":service_id}).first(): return []
+    if not master or not service or not master_service_is_allowed(conn,master_id,service_id,master.salon_id): return []
     ex=conn.execute(text("SELECT * FROM schedule_exceptions WHERE master_id=:m AND date=:d"),{"m":master_id,"d":day.isoformat()}).first()
     if ex:
         ex=rowdict(ex)
