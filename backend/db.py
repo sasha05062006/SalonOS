@@ -172,6 +172,8 @@ def init_db() -> None:
         conn.execute(text("UPDATE salons SET status='ACTIVE' WHERE status IS NULL OR status=''"))
     seed_demo_salons()
     with get_engine().begin() as conn:
-        rows=conn.execute(text("SELECT id FROM salons WHERE slug<>'salonos-control' AND id NOT IN (SELECT salon_id FROM subscriptions)")).fetchall()
+        rows=conn.execute(text("SELECT id,slug FROM salons WHERE slug<>'salonos-control' AND id NOT IN (SELECT salon_id FROM subscriptions)")).fetchall()
         for row in rows:
-            conn.execute(text("INSERT INTO subscriptions(id,salon_id,plan,status,price,currency) VALUES(:id,:sid,'START','NONE',0,'UZS')"),{"id":uid(),"sid":row.id})
+            demo = str(row.slug).startswith("demo-")
+            conn.execute(text("INSERT INTO subscriptions(id,salon_id,plan,status,price,currency) VALUES(:id,:sid,'START',:status,0,'UZS')"),{"id":uid(),"sid":row.id,"status":"ACTIVE" if demo else "NONE"})
+        conn.execute(text("""UPDATE subscriptions SET status='ACTIVE' WHERE salon_id IN (SELECT id FROM salons WHERE slug LIKE 'demo-%') AND status='NONE'"""))
