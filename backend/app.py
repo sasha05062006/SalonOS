@@ -212,6 +212,10 @@ def plans():
 def admin_subscription(request:Request):
     u=require_role(request,"admin")
     with get_engine().begin() as conn:
+        conn.execute(text("""UPDATE subscriptions SET status='EXPIRED',updated_at=CURRENT_TIMESTAMP
+          WHERE salon_id=:sid AND status IN ('TRIAL','ACTIVE') AND expires_at IS NOT NULL AND expires_at<=CURRENT_TIMESTAMP"""),{"sid":u["salon_id"]})
+        conn.execute(text("""UPDATE salons SET status='EXPIRED',is_active=FALSE
+          WHERE id=:sid AND EXISTS (SELECT 1 FROM subscriptions sub WHERE sub.salon_id=salons.id AND sub.status='EXPIRED')"""),{"sid":u["salon_id"]})
         row=conn.execute(text("""SELECT s.status salon_status,s.slug,s.is_active,sub.plan,sub.status subscription_status,sub.price,sub.currency,sub.started_at,sub.expires_at
           FROM salons s LEFT JOIN subscriptions sub ON sub.salon_id=s.id WHERE s.id=:sid"""),{"sid":u["salon_id"]}).first()
     return rowdict(row) if row else {}
