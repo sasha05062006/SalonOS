@@ -20,7 +20,9 @@ jobs:
       - name: Python syntax
         run: python -m compileall -q backend
       - name: Browser JavaScript syntax
-        run: python - <<'PY'
+        shell: bash
+        run: |
+          python - <<'PY'
           from pathlib import Path
           import re
           html=Path("frontend/index.html").read_text(encoding="utf-8")
@@ -28,4 +30,5 @@ jobs:
           if not m:
               raise SystemExit("No main script found")
           Path("/tmp/salonos.js").write_text(m.group(1), encoding="utf-8")
-        node --check /tmp/salonos.js
+          PY
+          node --check /tmp/salonos.js
