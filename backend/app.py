@@ -496,6 +496,7 @@ class AnnouncementIn(BaseModel):
     kind: str = "info"
     salon_id: str|None = None
     days: int|None = None
+    starts_at: str|None = None
 
 @app.get("/api/admin/notifications")
 def admin_notifications(request:Request):
@@ -567,11 +568,14 @@ def superadmin_announcement(payload:AnnouncementIn,request:Request):
     kind=payload.kind if payload.kind in {"info","success","warning","critical","update"} else "info"
     if payload.days is not None and (payload.days<1 or payload.days>365): raise HTTPException(400,"Некорректный срок")
     ends=now_utc()+timedelta(days=payload.days) if payload.days else None
+    starts=now_utc()
+    if payload.starts_at:
+        starts=parse_dt(payload.starts_at)
     with get_engine().begin() as conn:
         if payload.salon_id and not conn.execute(text("SELECT 1 FROM salons WHERE id=:sid AND slug<>'salonos-control'"),{"sid":payload.salon_id}).first(): raise HTTPException(404,"Салон не найден")
         aid=uid()
         conn.execute(text("""INSERT INTO announcements(id,salon_id,title,body,kind,is_active,starts_at,ends_at)
-          VALUES(:id,:sid,:title,:body,:kind,TRUE,CURRENT_TIMESTAMP,:ends)"""),{"id":aid,"sid":payload.salon_id,"title":payload.title.strip(),"body":payload.body.strip(),"kind":kind,"ends":ends})
+          VALUES(:id,:sid,:title,:body,:kind,TRUE,:starts,:ends)"""),{"id":aid,"sid":payload.salon_id,"title":payload.title.strip(),"body":payload.body.strip(),"kind":kind,"starts":starts,"ends":ends})
     return {"ok":True,"id":aid}
 
 @app.get("/api/superadmin/announcements")
