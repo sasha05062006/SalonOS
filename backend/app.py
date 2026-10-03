@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from .db import init_db, get_engine
+from .database import init_db, get_engine
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 COOKIE = "salonos_session"
@@ -61,6 +61,13 @@ class RegisterIn(BaseModel):
     name: str = Field(min_length=2,max_length=160); email: str = Field(min_length=5,max_length=255)
     password: str = Field(min_length=6,max_length=128); salon_name: str = Field(min_length=2,max_length=160)
     theme: str = "light"
+class MasterPinIn(BaseModel):
+    master_id: str
+    pin: str = Field(pattern=r"^\d{4}$")
+class MasterPinLoginIn(BaseModel):
+    slug: str
+    master_id: str
+    pin: str = Field(pattern=r"^\d{4}$")
 class MasterRegisterIn(BaseModel):
     master_id: str; email: str = Field(min_length=5,max_length=255); password: str = Field(min_length=6,max_length=128)
 class LoginIn(BaseModel): email: str; password: str
@@ -114,6 +121,14 @@ app=FastAPI(title="SalonOS API",version="1.0.0",lifespan=lifespan)
 def root():
     return FileResponse(BASE_DIR/"frontend"/"index.html")
 
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def manifest():
+    return FileResponse(BASE_DIR/"frontend"/"manifest.webmanifest", media_type="application/manifest+json")
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(BASE_DIR/"frontend"/"sw.js", media_type="application/javascript")
 
 @app.get("/assets/{path:path}")
 def assets(path:str):
@@ -215,6 +230,48 @@ def create_master_login(payload:MasterRegisterIn,request:Request):
         uid_=uid()
         conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role,master_id) VALUES(:id,:sid,:name,:email,:hash,'master',:master_id)"""),{"id":uid_,"sid":u["salon_id"],"name":master.name,"email":email,"hash":hash_password(payload.password),"master_id":master.id})
     return {"ok":True,"master_id":master.id}
+
+@app.put("/api/admin/masters/{master_id}/pin")
+def set_master_pin(master_id:str,payload:MasterPinIn,request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        require_plan(conn,u["salon_id"],"PRO","BUSINESS")
+        master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":master_id,"sid":u["salon_id"]}).first()
+        if not master: raise HTTPException(404,"Мастер не найден")
+        existing=conn.execute(text("SELECT id FROM users WHERE salon_id=:sid AND role='master' AND master_id=:mid"),{"sid":u["salon_id"],"mid":master_id}).first()
+        if existing:
+            conn.execute(text("UPDATE users SET pin_hash=:pin,password_hash=:password,is_active=TRUE WHERE id=:id"),{"pin":hash_password(payload.pin),"password":hash_password(secrets.token_urlsafe(32)),"id":existing.id})
+        else:
+            conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,pin_hash,role,master_id,is_active)
+              VALUES(:id,:sid,:name,:email,:password,:pin,'master',:mid,TRUE)"""),{"id":uid(),"sid":u["salon_id"],"name":master.name,"email":f"master+{master_id}@local.salonos","password":hash_password(secrets.token_urlsafe(32)),"pin":hash_password(payload.pin),"mid":master_id})
+    return {"ok":True}
+
+@app.get("/api/public/{slug}/staff")
+def public_staff(slug:str):
+    with get_engine().begin() as conn:
+        salon=conn.execute(text("""SELECT s.id FROM salons s JOIN subscriptions sub ON sub.salon_id=s.id
+          WHERE s.slug=:slug AND s.is_active=TRUE AND sub.plan IN ('PRO','BUSINESS') AND sub.status IN ('ACTIVE','TRIAL')
+          AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)"""),{"slug":slug}).first()
+        if not salon: raise HTTPException(404,"Вход сотрудников недоступен")
+        rows=conn.execute(text("""SELECT m.id,m.name FROM masters m WHERE m.salon_id=:sid AND m.is_active=TRUE
+          AND EXISTS(SELECT 1 FROM users u WHERE u.master_id=m.id AND u.role='master' AND u.pin_hash IS NOT NULL AND u.is_active=TRUE)
+          ORDER BY m.name"""),{"sid":salon.id}).fetchall()
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/auth/master-pin")
+def master_pin_login(payload:MasterPinLoginIn,response:Response):
+    with get_engine().begin() as conn:
+        salon=conn.execute(text("""SELECT s.id,s.slug,sub.plan FROM salons s JOIN subscriptions sub ON sub.salon_id=s.id
+          WHERE s.slug=:slug AND s.is_active=TRUE AND sub.plan IN ('PRO','BUSINESS')
+          AND sub.status IN ('ACTIVE','TRIAL') AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)"""),{"slug":payload.slug}).first()
+        if not salon: raise HTTPException(404,"Салон не найден")
+        row=conn.execute(text("""SELECT u.* FROM users u WHERE u.salon_id=:sid AND u.master_id=:mid AND u.role='master'
+          AND u.is_active=TRUE AND u.pin_hash IS NOT NULL"""),{"sid":salon.id,"mid":payload.master_id}).first()
+        if not row or not verify_password(payload.pin,row.pin_hash): raise HTTPException(401,"Неверный PIN")
+        token=secrets.token_urlsafe(48)
+        conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":row.id,"exp":now_utc()+timedelta(days=3650)})
+    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=315360000)
+    return {"ok":True,"role":"master","name":row.name}
 
 @app.post("/api/auth/logout")
 def logout(request:Request,response:Response):
