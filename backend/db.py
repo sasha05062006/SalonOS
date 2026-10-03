@@ -1,9 +1,13 @@
 import os
+import secrets
 from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+def uid() -> str:
+    return secrets.token_urlsafe(12)
 
 def database_url() -> str:
     value = os.getenv("DATABASE_URL", "sqlite:///./salonos.db")
