@@ -41,7 +41,7 @@ def unique_slug(conn, value: str) -> str:
     return candidate
 
 def rowdict(row): return dict(row._mapping)
-def now_utc(): return datetime.now(ZoneInfo("Asia/Tashkent")).replace(tzinfo=None)
+def now_utc(): return datetime.now(timezone.utc).replace(tzinfo=None)
 def parse_dt(value: str):
     try: return datetime.fromisoformat(value.replace("Z","+00:00")).replace(tzinfo=None)
     except ValueError: raise HTTPException(400,"Некорректные дата и время")
@@ -89,7 +89,8 @@ def assets(path:str):
     target=BASE_DIR/"frontend"/path
     if not target.is_file(): raise HTTPException(404,"Asset not found")
     return FileResponse(target)
-app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("CORS_ORIGINS","*").split(",") if x.strip()],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
+_cors=[x.strip() for x in os.getenv("CORS_ORIGINS","*").split(",") if x.strip()]
+app.add_middleware(CORSMiddleware,allow_origins=_cors,allow_credentials=(_cors!=["*"]),allow_methods=["*"],allow_headers=["*"])
 
 def auth_user(request: Request):
     token=request.cookies.get(COOKIE)
@@ -142,7 +143,7 @@ def login(payload:LoginIn,response:Response):
         if not row or not verify_password(payload.password,rowdict(row)["password_hash"]): raise HTTPException(401,"Неверный email или пароль")
         token=secrets.token_urlsafe(48)
         conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":row.id,"exp":now_utc()+timedelta(days=30)})
-    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=False,max_age=2592000); return {"ok":True}
+    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=2592000); return {"ok":True}
 
 @app.post("/api/auth/master")
 def create_master_login(payload:MasterRegisterIn,request:Request):
