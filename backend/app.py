@@ -519,7 +519,9 @@ def public_slots(slug:str,service_id:str,master_id:str,day:str):
     with get_engine().begin() as conn:
         salon=conn.execute(text("SELECT s.id FROM salons s WHERE s.slug=:slug AND s.is_active=TRUE AND (s.slug IN ('demo-lumiere','demo-noir','demo-bloom','demo-atelier') OR EXISTS (SELECT 1 FROM subscriptions sub WHERE sub.salon_id=s.id AND sub.status IN ('ACTIVE','TRIAL') AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)))"),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
-        if not conn.execute(text("""SELECT 1 FROM masters m JOIN services s ON s.salon_id=m.salon_id WHERE m.id=:m AND s.id=:s AND m.salon_id=:sid"""),{"m":master_id,"s":service_id,"sid":salon.id}).first(): return {"slots":[]}
+        master=conn.execute(text("SELECT * FROM masters WHERE id=:m AND salon_id=:sid AND is_active=TRUE"),{"m":master_id,"sid":salon.id}).first()
+        service=conn.execute(text("SELECT * FROM services WHERE id=:s AND salon_id=:sid AND is_active=TRUE"),{"s":service_id,"sid":salon.id}).first()
+        if not master or not service or not master_service_is_allowed(conn,master_id,service_id,salon.id): return {"slots":[]}
         return {"slots":availability_for(conn,master_id,service_id,d)}
 
 @app.post("/api/public/{slug}/appointments")
@@ -531,7 +533,7 @@ def public_appointment(slug:str,payload:AppointmentIn):
         if not salon: raise HTTPException(404,"Салон не найден")
         master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.master_id,"sid":salon.id}).first()
         service=conn.execute(text("SELECT * FROM services WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.service_id,"sid":salon.id}).first()
-        if not master or not service or not conn.execute(text("SELECT 1 FROM master_services WHERE master_id=:m AND service_id=:s"),{"m":payload.master_id,"s":payload.service_id}).first(): raise HTTPException(400,"Мастер недоступен для этой услуги")
+        if not master or not service or not master_service_is_allowed(conn,payload.master_id,payload.service_id,salon.id): raise HTTPException(400,"Мастер недоступен для этой услуги")
         end=start+timedelta(minutes=service.duration_minutes)
         if conn.dialect.name=="postgresql": conn.execute(text("SELECT id FROM masters WHERE id=:id FOR UPDATE"),{"id":payload.master_id}).first()
         if conn.execute(text("""SELECT id FROM appointments WHERE master_id=:m AND status IN ('confirmed','pending') AND (status='confirmed' OR created_at>:hold_until) AND start_at<:end AND end_at>:start LIMIT 1"""),{"m":payload.master_id,"start":start,"end":end,"hold_until":now_utc()-timedelta(minutes=15)}).first(): raise HTTPException(409,"Это время уже занято")
