@@ -30,7 +30,7 @@ function toastMsg(s){if(!toast)return;toast.textContent=s;toast.classList.remove
 function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]||c))}
 function themeClass(t){return ["light","dark","soft","modern"].includes(t)?t:"light"}
 function publicUrl(){const m=location.pathname.match(/^\/s\/([^/]+)\/?$/);return m?m[1]:null}
-async function boot(){try{const slug=publicUrl();if(slug){await renderPublic(slug);return}me=await api("/api/me");if(me.role==="superadmin"){await renderSuperadmin();return}if(me.role==="master"){await renderMasterWorkspace();return}await renderAdmin()}catch(e){try{renderLanding()}catch(err){console.error(err);app.innerHTML='<div class="wrap"><div class="card"><h2>SalonOS</h2><p>Не удалось загрузить интерфейс.</p></div></div>'}}}
+async function boot(){try{const slug=publicUrl();if(slug){try{const current=await api("/api/me");if(current.role==="master"&&current.salon_slug===slug){me=current;await renderMasterWorkspace();return}}catch(_){ }await renderPublic(slug);return}me=await api("/api/me");if(me.role==="superadmin"){await renderSuperadmin();return}if(me.role==="master"){await renderMasterWorkspace();return}await renderAdmin()}catch(e){try{renderLanding()}catch(err){console.error(err);app.innerHTML='<div class="wrap"><div class="card"><h2>SalonOS</h2><p>Не удалось загрузить интерфейс.</p></div></div>'}}}
 async function renderSuperadmin(){
   const salons=await api("/api/superadmin/salons");
   const active=salons.filter(x=>x.is_active).length;
