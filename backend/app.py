@@ -82,6 +82,13 @@ async def lifespan(app: FastAPI):
     init_db(); yield
 
 app=FastAPI(title="SalonOS API",version="1.0.0",lifespan=lifespan)
+
+
+@app.get("/assets/{path:path}")
+def assets(path:str):
+    target=BASE_DIR/"frontend"/path
+    if not target.is_file(): raise HTTPException(404,"Asset not found")
+    return FileResponse(target)
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("CORS_ORIGINS","*").split(",") if x.strip()],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 
 def auth_user(request: Request):
