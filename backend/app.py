@@ -123,7 +123,7 @@ def register(payload:RegisterIn,response:Response):
                      {"id":user_id,"salon":salon_id,"name":payload.name.strip(),"email":email,"hash":hash_password(payload.password)})
         token=secrets.token_urlsafe(48)
         conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":user_id,"exp":now_utc()+timedelta(days=30)})
-    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=False,max_age=2592000)
+    response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=os.getenv("APP_ENV","development")=="production",max_age=2592000)
     return {"ok":True,"slug":slug}
 
 @app.post("/api/auth/login")
