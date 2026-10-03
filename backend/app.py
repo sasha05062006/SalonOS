@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, date, time, timedelta, timezone\nfrom zoneinfo import ZoneInfo
+from datetime import datetime, date, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import hashlib, hmac, os, re, secrets, urllib.parse, urllib.request
 
@@ -346,7 +347,11 @@ def public_appointment(slug:str,payload:AppointmentIn):
         conn.execute(text("""INSERT INTO appointments(id,salon_id,client_id,master_id,service_id,start_at,end_at,price,status)
           VALUES(:id,:sid,:client,:master,:service,:start,:end,:price,'confirmed')"""),{"id":aid,"sid":salon.id,"client":client_id,"master":payload.master_id,"service":payload.service_id,"start":start,"end":end,"price":service.price})
         result={"id":aid,"client_name":payload.client_name.strip(),"service":service.name,"master":master.name,"start_at":start.isoformat(),"end_at":end.isoformat(),"price":service.price}
-    send_telegram(f"🔔 Новая запись в {salon.name}\\n{result['client_name']}\\n{result['service']} — {result['master']}\\n{start.strftime('%d.%m.%Y %H:%M')}\\n{result['price']:,} сум".replace(","," "))
+    send_telegram(f"🔔 Новая запись в {salon.name}\
+{result['client_name']}\
+{result['service']} — {result['master']}\
+{start.strftime('%d.%m.%Y %H:%M')}\
+{result['price']:,} сум".replace(","," "))
     return result
 
 @app.get("/api/admin/schedules/{master_id}/exceptions")
