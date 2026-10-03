@@ -26,7 +26,8 @@ SCHEMA = [
  description TEXT, logo_url TEXT, phone VARCHAR(40), address VARCHAR(255),
  timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Tashkent', theme VARCHAR(20) NOT NULL DEFAULT 'light',
  accent_color VARCHAR(20) NOT NULL DEFAULT '#7c3aed', is_active BOOLEAN NOT NULL DEFAULT TRUE,
- created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'
 )""",
 """CREATE TABLE IF NOT EXISTS users (
  id VARCHAR(64) PRIMARY KEY, salon_id VARCHAR(64) NOT NULL, name VARCHAR(160) NOT NULL,
@@ -79,7 +80,15 @@ SCHEMA = [
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id)
 )""",
 """CREATE INDEX IF NOT EXISTS idx_appointments_master_time ON appointments(master_id,start_at,end_at)""",
-"""CREATE INDEX IF NOT EXISTS idx_appointments_salon_time ON appointments(salon_id,start_at)"""
+"""CREATE INDEX IF NOT EXISTS idx_appointments_salon_time ON appointments(salon_id,start_at)""",
+"""CREATE TABLE IF NOT EXISTS subscriptions (
+ id VARCHAR(64) PRIMARY KEY, salon_id VARCHAR(64) NOT NULL UNIQUE, plan VARCHAR(32) NOT NULL DEFAULT 'START',
+ status VARCHAR(32) NOT NULL DEFAULT 'NONE', price INTEGER NOT NULL DEFAULT 0, currency VARCHAR(8) NOT NULL DEFAULT 'UZS',
+ started_at TIMESTAMP, expires_at TIMESTAMP, payment_provider VARCHAR(32), payment_id VARCHAR(160),
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(salon_id) REFERENCES salons(id)
+)""",
+"""CREATE INDEX IF NOT EXISTS idx_subscriptions_status_expiry ON subscriptions(status,expires_at)"""
 ]
 
 def seed_demo_salons() -> None:
@@ -140,4 +149,15 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE users ADD COLUMN master_id VARCHAR(64)"))
         else:
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS master_id VARCHAR(64)"))
+        if conn.dialect.name=="sqlite":
+            salon_cols={r[1] for r in conn.execute(text("PRAGMA table_info(salons)")).fetchall()}
+        else:
+            salon_cols={r[0] for r in conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='salons'")).fetchall()}
+        if "status" not in salon_cols:
+            conn.execute(text("ALTER TABLE salons ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'"))
+        conn.execute(text("UPDATE salons SET status='ACTIVE' WHERE status IS NULL OR status=''"))
     seed_demo_salons()
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("SELECT id FROM salons WHERE slug<>'salonos-control' AND id NOT IN (SELECT salon_id FROM subscriptions)")).fetchall()
+        for row in rows:
+            conn.execute(text("INSERT INTO subscriptions(id,salon_id,plan,status,price,currency) VALUES(:id,:sid,'START','NONE',0,'UZS')"),{"id":uid(),"sid":row.id})
