@@ -21,6 +21,7 @@ PLANS = {
     "BUSINESS": {"name":"BUSINESS","price":199000,"features":["Всё из PRO","До 10 мастеров","Менеджер с полными правами","До 2 дополнительных администраторов","Раздельные права команды","Приоритетная поддержка"]}
 }
 SUBSCRIPTION_STATUSES = {"NONE","PENDING_PAYMENT","TRIAL","ACTIVE","EXPIRED","CANCELLED"}
+DEMO_SLUGS = {"demo-lumiere","demo-noir","demo-bloom","demo-atelier"}
 
 def uid() -> str: return secrets.token_urlsafe(12)
 
@@ -110,9 +111,41 @@ def ensure_superadmin():
                      {"id":uid(),"sid":sid,"name":name,"email":email,"hash":hash_password(password)})
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def ensure_demo_salons():
+    demos=[
+        ("demo-lumiere","Lumière","Premium salon","light","#111111"),
+        ("demo-noir","NOIR","Barber studio","dark","#ffffff"),
+        ("demo-bloom","Bloom","Beauty studio","soft","#d9467a"),
+        ("demo-atelier","ATELIER","Modern salon","modern","#7c3aed")
+    ]
+    with get_engine().begin() as conn:
+        for slug,name,description,theme,accent in demos:
+            salon=conn.execute(text("SELECT id FROM salons WHERE slug=:slug"),{"slug":slug}).first()
+            if not salon:
+                sid="demo_"+slug.replace("-","_")
+                conn.execute(text("""INSERT INTO salons(id,slug,name,description,theme,accent_color,status,is_active)
+                    VALUES(:id,:slug,:name,:description,:theme,:accent,'DEMO',TRUE)"""),{"id":sid,"slug":slug,"name":name,"description":description,"theme":theme,"accent":accent})
+            else:
+                sid=salon.id
+            master=conn.execute(text("SELECT id FROM masters WHERE salon_id=:sid ORDER BY id LIMIT 1"),{"sid":sid}).first()
+            if not master:
+                mid=sid+"_master"
+                conn.execute(text("INSERT INTO masters(id,salon_id,name,description,is_active) VALUES(:id,:sid,:name,'Демонстрационный мастер',TRUE)"),{"id":mid,"sid":sid,"name":"Александра"})
+            else: mid=master.id
+            count=conn.execute(text("SELECT COUNT(*) FROM services WHERE salon_id=:sid"),{"sid":sid}).scalar_one()
+            if count==0:
+                services=[("demo_"+slug+"_hair","Стрижка",120000,60),("demo_"+slug+"_style","Укладка",90000,45),("demo_"+slug+"_care","Уход",150000,60)]
+                for xid,nm,price,dur in services:
+                    conn.execute(text("INSERT INTO services(id,salon_id,name,price,duration_minutes,is_active) VALUES(:id,:sid,:name,:price,:dur,TRUE)"),{"id":xid,"sid":sid,"name":nm,"price":price,"dur":dur})
+                    conn.execute(text("INSERT INTO master_services(master_id,service_id) VALUES(:mid,:sid)"),{"mid":mid,"sid":xid})
+            if conn.execute(text("SELECT COUNT(*) FROM master_schedules WHERE master_id=:mid"),{"mid":mid}).scalar_one()==0:
+                for wd in range(7):
+                    conn.execute(text("INSERT INTO master_schedules(id,master_id,weekday,start_time,end_time,is_working) VALUES(:id,:mid,:wd,'10:00','20:00',:working)"),{"id":sid+"_sch_"+str(wd),"mid":mid,"wd":wd,"working":wd<6})
+
+def lifespan(app: FastAPI):
     init_db()
     ensure_superadmin()
+    ensure_demo_salons()
     yield
 
 app=FastAPI(title="SalonOS API",version="1.0.0",lifespan=lifespan)
@@ -470,7 +503,7 @@ def availability_for(conn,master_id:str,service_id:str,day:date):
 @app.get("/api/public/{slug}")
 def public_salon(slug:str):
     with get_engine().begin() as conn:
-        salon=conn.execute(text("""SELECT id,slug,name,description,logo_url,phone,address,timezone,theme,accent_color FROM salons s JOIN subscriptions sub ON sub.salon_id=s.id WHERE s.slug=:slug AND s.is_active=TRUE AND sub.status IN ('ACTIVE','TRIAL') AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)"""),{"slug":slug}).first()
+        salon=conn.execute(text("""SELECT id,slug,name,description,logo_url,phone,address,timezone,theme,accent_color FROM salons s JOIN subscriptions sub ON sub.salon_id=s.id WHERE s.slug=:slug AND s.is_active=TRUE AND (s.slug IN ('demo-lumiere','demo-noir','demo-bloom','demo-atelier') OR EXISTS (SELECT 1 FROM subscriptions sub WHERE sub.salon_id=s.id AND sub.status IN ('ACTIVE','TRIAL') AND (sub.expires_at IS NULL OR sub.expires_at>CURRENT_TIMESTAMP)))"""),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         sid=salon.id
         sr=conn.execute(text("SELECT id,name,description,price,duration_minutes FROM services WHERE salon_id=:sid AND is_active=TRUE ORDER BY name"),{"sid":sid}).fetchall()
