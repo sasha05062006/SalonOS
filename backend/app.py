@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     init_db(); yield
 
 app=FastAPI(title="SalonOS API",version="1.0.0",lifespan=lifespan)
-app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
+app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("CORS_ORIGINS","*").split(",") if x.strip()],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 
 def auth_user(request: Request):
     token=request.cookies.get(COOKIE)
