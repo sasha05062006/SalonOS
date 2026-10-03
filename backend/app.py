@@ -192,7 +192,7 @@ def logout(request:Request,response:Response):
     token=request.cookies.get(COOKIE)
     if token:
         with get_engine().begin() as conn: conn.execute(text("DELETE FROM sessions WHERE token=:token"),{"token":token})
-    response.delete_cookie(COOKIE); return {"ok":True}
+    response.delete_cookie(COOKIE); response.delete_cookie("salonos_superadmin_return"); return {"ok":True}
 
 @app.get("/api/me")
 def me(request:Request):
