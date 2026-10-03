@@ -120,7 +120,7 @@ def assets(path:str):
     target=BASE_DIR/"frontend"/path
     if not target.is_file(): raise HTTPException(404,"Asset not found")
     return FileResponse(target)
-\n@app.get("/admin", include_in_schema=False)
+@app.get("/admin", include_in_schema=False)
 @app.get("/admin/", include_in_schema=False)
 def admin_page():
     return FileResponse(BASE_DIR/"frontend"/"index.html")
