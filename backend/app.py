@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, date, time, timedelta, timezone
+from datetime import datetime, date, time, timedelta, timezone\nfrom zoneinfo import ZoneInfo
 from pathlib import Path
 import hashlib, hmac, os, re, secrets, urllib.parse, urllib.request
 
@@ -40,7 +40,7 @@ def unique_slug(conn, value: str) -> str:
     return candidate
 
 def rowdict(row): return dict(row._mapping)
-def now_utc(): return datetime.now(timezone.utc).replace(tzinfo=None)
+def now_utc(): return datetime.now(ZoneInfo("Asia/Tashkent")).replace(tzinfo=None)
 def parse_dt(value: str): return datetime.fromisoformat(value.replace("Z","+00:00")).replace(tzinfo=None)
 
 def clean_phone(phone: str) -> str:
@@ -313,7 +313,7 @@ def public_salon(slug:str):
 def public_slots(slug:str,service_id:str,master_id:str,day:str):
     try: d=date.fromisoformat(day)
     except ValueError: raise HTTPException(400,"Неверная дата")
-    if d<date.today(): return {"slots":[]}
+    if d<datetime.now(ZoneInfo("Asia/Tashkent")).date(): return {"slots":[]}
     with get_engine().begin() as conn:
         salon=conn.execute(text("SELECT id FROM salons WHERE slug=:slug AND is_active=TRUE"),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
