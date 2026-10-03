@@ -516,6 +516,39 @@ def admin_clients(request:Request):
           WHERE c.salon_id=:sid GROUP BY c.id ORDER BY c.updated_at DESC"""),{"sid":u["salon_id"]}).fetchall()
     return [rowdict(x) for x in rows]
 
+@app.get("/api/admin/team")
+def admin_team(request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        require_plan(conn,u["salon_id"],"BUSINESS")
+        rows=conn.execute(text("""SELECT id,name,email,role,is_active,master_id,created_at FROM users
+          WHERE salon_id=:sid AND role IN ('manager','admin') ORDER BY role,name"""),{"sid":u["salon_id"]}).fetchall()
+    return [rowdict(x) for x in rows]
+
+@app.post("/api/admin/team/admin")
+def create_team_admin(payload:LoginIn,request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        require_plan(conn,u["salon_id"],"BUSINESS")
+        if u["role"]!="manager": raise HTTPException(403,"Только менеджер может создавать администраторов")
+        count=conn.execute(text("SELECT COUNT(*) FROM users WHERE salon_id=:sid AND role='admin' AND is_active=TRUE"),{"sid":u["salon_id"]}).scalar_one()
+        if count>=2: raise HTTPException(403,"Можно создать максимум 2 дополнительных администратора")
+        email=payload.email.strip().lower()
+        if conn.execute(text("SELECT 1 FROM users WHERE lower(email)=:email"),{"email":email}).first(): raise HTTPException(409,"Этот email уже используется")
+        conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role,is_active)
+          VALUES(:id,:sid,:name,:email,:hash,'admin',TRUE)"""),{"id":uid(),"sid":u["salon_id"],"name":email.split("@")[0],"email":email,"hash":hash_password(payload.password)})
+    return {"ok":True}
+
+@app.patch("/api/admin/team/{user_id}")
+def toggle_team_user(user_id:str,request:Request,active:bool):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        require_plan(conn,u["salon_id"],"BUSINESS")
+        if u["role"]!="manager": raise HTTPException(403,"Только менеджер может изменять доступ команды")
+        if user_id==u["id"]: raise HTTPException(400,"Нельзя отключить себя")
+        conn.execute(text("UPDATE users SET is_active=:active WHERE id=:uid AND salon_id=:sid AND role='admin'"),{"active":active,"uid":user_id,"sid":u["salon_id"]})
+    return {"ok":True}
+
 class SupportMessageIn(BaseModel):
     body: str = Field(min_length=1,max_length=4000)
 
