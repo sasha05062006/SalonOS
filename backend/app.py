@@ -54,6 +54,7 @@ def clean_phone(phone: str) -> str:
 class RegisterIn(BaseModel):
     name: str = Field(min_length=2,max_length=160); email: str = Field(min_length=5,max_length=255)
     password: str = Field(min_length=6,max_length=128); salon_name: str = Field(min_length=2,max_length=160)
+    theme: str = "light"
 class MasterRegisterIn(BaseModel):
     master_id: str; email: str = Field(min_length=5,max_length=255); password: str = Field(min_length=6,max_length=128)
 class LoginIn(BaseModel): email: str; password: str
@@ -147,7 +148,9 @@ def register(payload:RegisterIn,response:Response):
     with get_engine().begin() as conn:
         if conn.execute(text("SELECT 1 FROM users WHERE lower(email)=:email"),{"email":email}).first(): raise HTTPException(409,"Этот email уже зарегистрирован")
         salon_id,user_id=uid(),uid(); slug=unique_slug(conn,payload.salon_name)
-        conn.execute(text("INSERT INTO salons(id,slug,name) VALUES(:id,:slug,:name)"),{"id":salon_id,"slug":slug,"name":payload.salon_name.strip()})
+        theme = payload.theme.strip().lower()
+        if theme not in THEMES: raise HTTPException(400,"Неверный дизайн")
+        conn.execute(text("INSERT INTO salons(id,slug,name,theme) VALUES(:id,:slug,:name,:theme)"),{"id":salon_id,"slug":slug,"name":payload.salon_name.strip(),"theme":theme})
         conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role) VALUES(:id,:salon,:name,:email,:hash,'admin')"""),
                      {"id":user_id,"salon":salon_id,"name":payload.name.strip(),"email":email,"hash":hash_password(payload.password)})
         token=secrets.token_urlsafe(48)
