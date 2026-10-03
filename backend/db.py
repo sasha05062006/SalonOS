@@ -88,7 +88,21 @@ SCHEMA = [
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  FOREIGN KEY(salon_id) REFERENCES salons(id)
 )""",
-"""CREATE INDEX IF NOT EXISTS idx_subscriptions_status_expiry ON subscriptions(status,expires_at)"""
+"""CREATE INDEX IF NOT EXISTS idx_subscriptions_status_expiry ON subscriptions(status,expires_at)""",
+"""CREATE TABLE IF NOT EXISTS support_messages (
+ id VARCHAR(64) PRIMARY KEY, salon_id VARCHAR(64) NOT NULL, sender_role VARCHAR(32) NOT NULL,
+ sender_user_id VARCHAR(64), body TEXT NOT NULL, is_read BOOLEAN NOT NULL DEFAULT FALSE,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(salon_id) REFERENCES salons(id)
+)""",
+"""CREATE INDEX IF NOT EXISTS idx_support_messages_salon_time ON support_messages(salon_id,created_at)""",
+"""CREATE TABLE IF NOT EXISTS announcements (
+ id VARCHAR(64) PRIMARY KEY, salon_id VARCHAR(64), title VARCHAR(180) NOT NULL, body TEXT NOT NULL,
+ kind VARCHAR(32) NOT NULL DEFAULT 'info', is_active BOOLEAN NOT NULL DEFAULT TRUE,
+ starts_at TIMESTAMP, ends_at TIMESTAMP, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(salon_id) REFERENCES salons(id)
+)""",
+"""CREATE INDEX IF NOT EXISTS idx_announcements_salon_active ON announcements(salon_id,is_active,created_at)"""
 ]
 
 def seed_demo_salons() -> None:
