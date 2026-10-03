@@ -1,0 +1,20 @@
+name: frontend-diagnose
+on:
+  pull_request:
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Extract JS
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("frontend/index.html").read_text(encoding="utf-8")
+          Path("/tmp/app.js").write_text(s[s.index("<script>")+8:s.rindex("</script>")],encoding="utf-8")
+          PY
+      - name: Check syntax
+        run: node --check /tmp/app.js
