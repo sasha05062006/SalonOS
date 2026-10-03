@@ -15,23 +15,14 @@ a{text-decoration:none;color:inherit}.hidden{display:none!important}.app{min-hei
 <body><div id="app"></div><div id="modal" class="modal hidden"></div><div id="toast" class="toast hidden"></div>
 <script>
 const $=s=>document.querySelector(s), app=$("#app"), modal=$("#modal"), toast=$("#toast");
-let me=null, salon=null, masters=[], services=[], selectedService=null, selectedMaster=null, bookingStep=1, bookingDate=new Date().toISOString().slice(0,10), slots=[];
+let me=null,salon=null,masters=[],services=[],selectedService=null,selectedMaster=null,bookingStep=1,bookingDate=new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Tashkent"}),slots=[];
 const money=n=>new Intl.NumberFormat("ru-RU").format(n)+" сум";
 async function api(path,opt={}){const r=await fetch(path,{credentials:"include",headers:{"Content-Type":"application/json",...(opt.headers||{})},...opt});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.detail||"Ошибка запроса");return d}
-function toastMsg(s){toast.textContent=s;toast.classList.remove("hidden");setTimeout(()=>toast.classList.add("hidden"),2800)}
-function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
+function toastMsg(s){if(!toast)return;toast.textContent=s;toast.classList.remove("hidden");setTimeout(()=>toast.classList.add("hidden"),2800)}
+function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]||c))}
 function themeClass(t){return ["light","dark","soft","modern"].includes(t)?t:"light"}
-function publicUrl(){return location.pathname.match(/^\\/s\\/([^/]+)/)?.[1]}
-async function boot(){
-  const slug=publicUrl();
-  try{
-    if(slug){await renderPublic(slug);return}
-    me=await api("/api/me");
-    await renderAdmin();
-  }catch(e){
-    try{renderLanding()}catch(err){console.error("SalonOS boot failed",err);document.getElementById("app").innerHTML='<div class="wrap"><div class="card"><h2>SalonOS</h2><p class="muted">Не удалось загрузить интерфейс.</p></div></div>'}
-  }
-}
+function publicUrl(){const m=location.pathname.match(/^\/s\/([^/]+)\/?$/);return m?m[1]:null}
+async function boot(){try{const slug=publicUrl();if(slug){await renderPublic(slug);return}me=await api("/api/me");await renderAdmin()}catch(e){try{renderLanding()}catch(err){console.error(err);app.innerHTML='<div class="wrap"><div class="card"><h2>SalonOS</h2><p>Не удалось загрузить интерфейс.</p></div></div>'}}}
 function renderLanding(){app.innerHTML='<div class="wrap"><div class="top"><div class="brand"><div class="logo">S</div>SalonOS</div></div><section class="hero"><h1>Онлайн-запись, которую можно запустить за несколько минут.</h1><p>Свой салон, мастера, услуги, расписание и публичная страница — без программирования.</p><div class="row"><button class="btn" onclick="openAuth(\'register\')">Создать салон</button><button class="btn ghost" onclick="openAuth(\'login\')">Войти</button></div></section><div class="grid"><div class="card"><b>Онлайн-запись</b><p class="muted">Клиент сам выбирает услугу, мастера и свободное время.</p></div><div class="card"><b>4 дизайна</b><p class="muted">Light, Dark, Soft и Modern — салон выбирает свой стиль.</p></div><div class="card"><b>Управление</b><p class="muted">Записи, мастера, услуги, клиенты и расписание.</p></div></div></div>'}
 function openAuth(mode){modal.classList.remove("hidden");modal.innerHTML='<div class="modalbox"><div class="top"><h2>'+(mode==="login"?"Вход":"Создание салона")+'</h2><button class="btn ghost small" onclick="closeModal()">Закрыть</button></div><form onsubmit="auth(event,\''+mode+'\')">'+(mode==="register"?'<label>Ваше имя</label><input id="an" required minlength="2"><label>Название салона</label><input id="sn" required minlength="2">':'')+'<label>Email</label><input id="ae" type="email" required><label>Пароль</label><input id="ap" type="password" required minlength="6"><button class="btn" style="width:100%;margin-top:18px">'+(mode==="login"?"Войти":"Создать салон")+'</button></form></div>'}
 function closeModal(){modal.classList.add("hidden");modal.innerHTML=""}
@@ -74,4 +65,5 @@ function nextBooking(){if(bookingStep===1&&!selectedService)return toastMsg("В�
 async function submitBooking(){if(!$("#bn").value||!$("#bp").value)return toastMsg("Заполните имя и телефон");const start=bookingDate+"T"+window.selectedSlot+":00";try{const r=await api("/api/public/"+salon.slug+"/appointments",{method:"POST",body:JSON.stringify({master_id:selectedMaster.id,service_id:selectedService.id,start_at:start,client_name:$("#bn").value,client_phone:$("#bp").value})});modal.innerHTML='<div class="modalbox" style="text-align:center"><div class="logo" style="margin:auto">✓</div><h2>Запись подтверждена</h2><p class="muted">'+esc(r.service)+' · '+esc(r.master)+'</p><p>'+new Date(r.start_at).toLocaleString("ru-RU",{dateStyle:"long",timeStyle:"short"})+'</p><button class="btn" onclick="closeModal()">Готово</button></div>'}catch(e){toastMsg(e.message)}}
 boot();
 if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});
+
 </script></body></html>
