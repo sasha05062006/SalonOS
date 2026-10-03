@@ -26,7 +26,7 @@ SCHEMA = [
 )""",
 """CREATE TABLE IF NOT EXISTS users (
  id VARCHAR(64) PRIMARY KEY, salon_id VARCHAR(64) NOT NULL, name VARCHAR(160) NOT NULL,
- email VARCHAR(255) NOT NULL, password_hash VARCHAR(255) NOT NULL, role VARCHAR(32) NOT NULL,
+ email VARCHAR(255) NOT NULL, password_hash VARCHAR(255) NOT NULL, role VARCHAR(32) NOT NULL, master_id VARCHAR(64),
  is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  UNIQUE(salon_id,email), FOREIGN KEY(salon_id) REFERENCES salons(id)
 )""",
@@ -85,3 +85,9 @@ def init_db() -> None:
             conn.execute(text("PRAGMA foreign_keys = ON"))
         for statement in SCHEMA:
             conn.execute(text(statement))
+        if conn.dialect.name == "sqlite":
+            cols={r[1] for r in conn.execute(text("PRAGMA table_info(users)")).fetchall()}
+            if "master_id" not in cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN master_id VARCHAR(64)"))
+        else:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS master_id VARCHAR(64)"))
