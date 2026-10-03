@@ -51,6 +51,8 @@ def clean_phone(phone: str) -> str:
 class RegisterIn(BaseModel):
     name: str = Field(min_length=2,max_length=160); email: str = Field(min_length=5,max_length=255)
     password: str = Field(min_length=6,max_length=128); salon_name: str = Field(min_length=2,max_length=160)
+class MasterRegisterIn(BaseModel):
+    master_id: str; email: str = Field(min_length=5,max_length=255); password: str = Field(min_length=6,max_length=128)
 class LoginIn(BaseModel): email: str; password: str
 class SalonIn(BaseModel):
     name: str = Field(min_length=2,max_length=160); description: str=""; logo_url: str=""; phone: str=""; address: str=""
@@ -68,6 +70,9 @@ class ExceptionIn(BaseModel):
 class AppointmentIn(BaseModel):
     master_id: str; service_id: str; start_at: str; client_name: str=Field(min_length=2,max_length=160)
     client_phone: str=Field(min_length=7,max_length=40)
+class AppointmentUpdateIn(BaseModel):
+    master_id: str; service_id: str; start_at: str; client_name: str=Field(min_length=2,max_length=160)
+    client_phone: str=Field(min_length=7,max_length=40); status: str="confirmed"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -128,6 +133,18 @@ def login(payload:LoginIn,response:Response):
         token=secrets.token_urlsafe(48)
         conn.execute(text("INSERT INTO sessions(token,user_id,expires_at) VALUES(:token,:uid,:exp)"),{"token":token,"uid":row.id,"exp":now_utc()+timedelta(days=30)})
     response.set_cookie(COOKIE,token,httponly=True,samesite="lax",secure=False,max_age=2592000); return {"ok":True}
+
+@app.post("/api/auth/master")
+def create_master_login(payload:MasterRegisterIn,request:Request):
+    u=require_role(request,"admin")
+    email=payload.email.strip().lower()
+    with get_engine().begin() as conn:
+        master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.master_id,"sid":u["salon_id"]}).first()
+        if not master: raise HTTPException(404,"Мастер не найден")
+        if conn.execute(text("SELECT 1 FROM users WHERE lower(email)=:email"),{"email":email}).first(): raise HTTPException(409,"Этот email уже используется")
+        uid_=uid()
+        conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role) VALUES(:id,:sid,:name,:email,:hash,'master')"""),{"id":uid_,"sid":u["salon_id"],"name":master.name,"email":email,"hash":hash_password(payload.password)})
+    return {"ok":True}
 
 @app.post("/api/auth/logout")
 def logout(request:Request,response:Response):
@@ -332,19 +349,42 @@ def public_appointment(slug:str,payload:AppointmentIn):
 
 @app.get("/api/admin/appointments")
 def admin_appointments(request:Request,day:str|None=None,status:str|None=None,master_id:str|None=None):
-    u=require_role(request,"admin")
+    u=require_role(request,"admin","master")
+    if u["role"]=="master":
+        with get_engine().begin() as conn:
+            mr=conn.execute(text("SELECT id FROM masters WHERE salon_id=:sid AND lower(name)=lower(:name) AND is_active=TRUE"),{"sid":u["salon_id"],"name":u["name"]}).first()
+        master_id=mr.id if mr else "__none__"
     day=day or date.today().isoformat()
     try: d=date.fromisoformat(day)
     except ValueError: raise HTTPException(400,"Неверная дата")
     start=datetime.combine(d,time.min); end=start+timedelta(days=1)
     clauses=["a.salon_id=:sid","a.start_at>=:start","a.start_at<:end"]; params={"sid":u["salon_id"],"start":start,"end":end}
     if status in STATUSES: clauses.append("a.status=:status"); params["status"]=status
-    if master_id: clauses.append("a.master_id=:master")
+    if master_id: clauses.append("a.master_id=:master"); params["master"]=master_id
     with get_engine().begin() as conn:
         rows=conn.execute(text("""SELECT a.*,c.name client_name,c.phone client_phone,m.name master_name,s.name service_name
           FROM appointments a JOIN clients c ON c.id=a.client_id JOIN masters m ON m.id=a.master_id JOIN services s ON s.id=a.service_id
           WHERE """+" AND ".join(clauses)+" ORDER BY a.start_at"),params).fetchall()
     return [rowdict(x) for x in rows]
+
+@app.put("/api/admin/appointments/{appointment_id}")
+def update_appointment(appointment_id:str,payload:AppointmentUpdateIn,request:Request):
+    u=require_role(request,"admin")
+    if payload.status not in STATUSES: raise HTTPException(400,"Неверный статус")
+    start=parse_dt(payload.start_at)
+    if start<now_utc(): raise HTTPException(400,"Нельзя назначить запись в прошлое")
+    with get_engine().begin() as conn:
+        a=conn.execute(text("SELECT * FROM appointments WHERE id=:id AND salon_id=:sid"),{"id":appointment_id,"sid":u["salon_id"]}).first()
+        master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.master_id,"sid":u["salon_id"]}).first()
+        service=conn.execute(text("SELECT * FROM services WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.service_id,"sid":u["salon_id"]}).first()
+        if not a or not master or not service: raise HTTPException(404,"Запись, мастер или услуга не найдены")
+        if not conn.execute(text("SELECT 1 FROM master_services WHERE master_id=:m AND service_id=:s"),{"m":master.id,"s":service.id}).first(): raise HTTPException(400,"Мастер не оказывает эту услугу")
+        end=start+timedelta(minutes=service.duration_minutes)
+        if conn.execute(text("""SELECT id FROM appointments WHERE master_id=:m AND status='confirmed' AND id<>:id AND start_at<:end AND end_at>:start LIMIT 1"""),{"m":master.id,"id":appointment_id,"start":start,"end":end}).first(): raise HTTPException(409,"Это время уже занято")
+        phone=clean_phone(payload.client_phone)
+        conn.execute(text("""UPDATE clients SET name=:name,phone=:phone,updated_at=:now WHERE id=:id AND salon_id=:sid"""),{"name":payload.client_name.strip(),"phone":phone,"now":now_utc(),"id":a.client_id,"sid":u["salon_id"]})
+        conn.execute(text("""UPDATE appointments SET master_id=:m,service_id=:s,start_at=:start,end_at=:end,price=:price,status=:status,updated_at=:now WHERE id=:id AND salon_id=:sid"""),{"m":master.id,"s":service.id,"start":start,"end":end,"price":service.price,"status":payload.status,"now":now_utc(),"id":appointment_id,"sid":u["salon_id"]})
+    return {"ok":True}
 
 @app.patch("/api/admin/appointments/{appointment_id}")
 def admin_appointment_status(appointment_id:str,request:Request,status:str):
