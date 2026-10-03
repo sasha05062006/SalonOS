@@ -1,0 +1,31 @@
+name: SalonOS checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Python syntax
+        run: python -m compileall -q backend
+      - name: Browser JavaScript syntax
+        run: python - <<'PY'
+          from pathlib import Path
+          import re
+          html=Path("frontend/index.html").read_text(encoding="utf-8")
+          m=re.search(r"<script>(.*?)</script>", html, re.S)
+          if not m:
+              raise SystemExit("No main script found")
+          Path("/tmp/salonos.js").write_text(m.group(1), encoding="utf-8")
+        node --check /tmp/salonos.js
