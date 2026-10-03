@@ -120,7 +120,7 @@ def auth_user(request: Request):
         row=conn.execute(text("""SELECT u.*,s.is_active salon_active,s.name salon_name,s.slug salon_slug
           FROM sessions x JOIN users u ON u.id=x.user_id JOIN salons s ON s.id=u.salon_id
           WHERE x.token=:token AND x.expires_at>:now AND u.is_active=TRUE"""),{"token":token,"now":now_utc()}).first()
-    if not row or (row.role!="superadmin" and not row.salon_active): raise HTTPException(401,"Сессия недействительна")
+    if not row: raise HTTPException(401,"Сессия недействительна")
     return rowdict(row)
 
 def require_role(request:Request,*roles):
@@ -150,7 +150,8 @@ def register(payload:RegisterIn,response:Response):
         salon_id,user_id=uid(),uid(); slug=unique_slug(conn,payload.salon_name)
         theme = payload.theme.strip().lower()
         if theme not in THEMES: raise HTTPException(400,"Неверный дизайн")
-        conn.execute(text("INSERT INTO salons(id,slug,name,theme) VALUES(:id,:slug,:name,:theme)"),{"id":salon_id,"slug":slug,"name":payload.salon_name.strip(),"theme":theme})
+        conn.execute(text("INSERT INTO salons(id,slug,name,theme,status,is_active) VALUES(:id,:slug,:name,:theme,'DRAFT',TRUE)"),{"id":salon_id,"slug":slug,"name":payload.salon_name.strip(),"theme":theme})
+        conn.execute(text("INSERT INTO subscriptions(id,salon_id,plan,status,price,currency) VALUES(:id,:sid,'PRO','NONE',99000,'UZS')"),{"id":uid(),"sid":salon_id})
         conn.execute(text("""INSERT INTO users(id,salon_id,name,email,password_hash,role) VALUES(:id,:salon,:name,:email,:hash,'admin')"""),
                      {"id":user_id,"salon":salon_id,"name":payload.name.strip(),"email":email,"hash":hash_password(payload.password)})
         token=secrets.token_urlsafe(48)
@@ -196,6 +197,31 @@ def get_salon(request:Request):
     u=require_role(request,"admin","master")
     with get_engine().begin() as conn: row=conn.execute(text("SELECT * FROM salons WHERE id=:id"),{"id":u["salon_id"]}).first()
     return rowdict(row)
+
+@app.get("/api/plans")
+def plans():
+    return list(PLANS.values())
+
+@app.get("/api/admin/subscription")
+def admin_subscription(request:Request):
+    u=require_role(request,"admin")
+    with get_engine().begin() as conn:
+        row=conn.execute(text("""SELECT s.status salon_status,s.slug,s.is_active,sub.plan,sub.status subscription_status,sub.price,sub.currency,sub.started_at,sub.expires_at
+          FROM salons s LEFT JOIN subscriptions sub ON sub.salon_id=s.id WHERE s.id=:sid"""),{"sid":u["salon_id"]}).first()
+    return rowdict(row) if row else {}
+
+@app.post("/api/admin/subscription/request")
+def request_subscription(request:Request,plan:str="PRO"):
+    u=require_role(request,"admin")
+    plan=plan.upper()
+    if plan not in PLANS: raise HTTPException(400,"Неизвестный тариф")
+    with get_engine().begin() as conn:
+        conn.execute(text("""INSERT INTO subscriptions(id,salon_id,plan,status,price,currency)
+          VALUES(:id,:sid,:plan,'PENDING_PAYMENT',:price,'UZS')
+          ON CONFLICT(salon_id) DO UPDATE SET plan=:plan,status='PENDING_PAYMENT',price=:price,updated_at=CURRENT_TIMESTAMP"""),
+          {"id":uid(),"sid":u["salon_id"],"plan":plan,"price":PLANS[plan]["price"]})
+        conn.execute(text("UPDATE salons SET status='PENDING_PAYMENT' WHERE id=:sid"),{"sid":u["salon_id"]})
+    return {"ok":True,"status":"PENDING_PAYMENT","plan":plan,"price":PLANS[plan]["price"]}
 
 @app.put("/api/admin/salon")
 def update_salon(payload:SalonIn,request:Request):
@@ -335,7 +361,7 @@ def availability_for(conn,master_id:str,service_id:str,day:date):
 @app.get("/api/public/{slug}")
 def public_salon(slug:str):
     with get_engine().begin() as conn:
-        salon=conn.execute(text("""SELECT id,slug,name,description,logo_url,phone,address,timezone,theme,accent_color FROM salons WHERE slug=:slug AND is_active=TRUE"""),{"slug":slug}).first()
+        salon=conn.execute(text("""SELECT id,slug,name,description,logo_url,phone,address,timezone,theme,accent_color FROM salons WHERE slug=:slug AND is_active=TRUE AND status='ACTIVE'"""),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         sid=salon.id
         sr=conn.execute(text("SELECT id,name,description,price,duration_minutes FROM services WHERE salon_id=:sid AND is_active=TRUE ORDER BY name"),{"sid":sid}).fetchall()
@@ -349,7 +375,7 @@ def public_slots(slug:str,service_id:str,master_id:str,day:str):
     except ValueError: raise HTTPException(400,"Неверная дата")
     if d<datetime.now(ZoneInfo("Asia/Tashkent")).date(): return {"slots":[]}
     with get_engine().begin() as conn:
-        salon=conn.execute(text("SELECT id FROM salons WHERE slug=:slug AND is_active=TRUE"),{"slug":slug}).first()
+        salon=conn.execute(text("SELECT id FROM salons WHERE slug=:slug AND is_active=TRUE AND status='ACTIVE'"),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         if not conn.execute(text("""SELECT 1 FROM masters m JOIN services s ON s.salon_id=m.salon_id WHERE m.id=:m AND s.id=:s AND m.salon_id=:sid"""),{"m":master_id,"s":service_id,"sid":salon.id}).first(): return {"slots":[]}
         return {"slots":availability_for(conn,master_id,service_id,d)}
@@ -359,7 +385,7 @@ def public_appointment(slug:str,payload:AppointmentIn):
     start=parse_dt(payload.start_at)
     if start<now_utc(): raise HTTPException(400,"Нельзя записаться в прошлое")
     with get_engine().begin() as conn:
-        salon=conn.execute(text("SELECT * FROM salons WHERE slug=:slug AND is_active=TRUE"),{"slug":slug}).first()
+        salon=conn.execute(text("SELECT * FROM salons WHERE slug=:slug AND is_active=TRUE AND status='ACTIVE'"),{"slug":slug}).first()
         if not salon: raise HTTPException(404,"Салон не найден")
         master=conn.execute(text("SELECT * FROM masters WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.master_id,"sid":salon.id}).first()
         service=conn.execute(text("SELECT * FROM services WHERE id=:id AND salon_id=:sid AND is_active=TRUE"),{"id":payload.service_id,"sid":salon.id}).first()
@@ -459,15 +485,38 @@ def admin_clients(request:Request):
 def superadmin_salons(request:Request):
     u=auth_user(request)
     if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
-    with get_engine().begin() as conn: rows=conn.execute(text("SELECT id,slug,name,phone,is_active,created_at FROM salons WHERE slug<>'salonos-control' ORDER BY created_at DESC")).fetchall()
+    with get_engine().begin() as conn:
+        rows=conn.execute(text("""SELECT s.id,s.slug,s.name,s.phone,s.is_active,s.status,s.created_at,
+          COALESCE(sub.plan,'START') plan,COALESCE(sub.status,'NONE') subscription_status,sub.price,sub.currency,sub.started_at,sub.expires_at
+          FROM salons s LEFT JOIN subscriptions sub ON sub.salon_id=s.id
+          WHERE s.slug<>'salonos-control' ORDER BY s.created_at DESC""")).fetchall()
     return [rowdict(x) for x in rows]
 
 @app.patch("/api/superadmin/salons/{salon_id}")
 def superadmin_toggle(salon_id:str,request:Request,active:bool):
     u=auth_user(request)
     if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
-    with get_engine().begin() as conn: conn.execute(text("UPDATE salons SET is_active=:active WHERE id=:id"),{"active":active,"id":salon_id})
+    with get_engine().begin() as conn:
+        conn.execute(text("UPDATE salons SET is_active=:active,status=:status WHERE id=:id"),{"active":active,"status":"ACTIVE" if active else "SUSPENDED","id":salon_id})
+        if active:
+            conn.execute(text("UPDATE subscriptions SET status='ACTIVE',started_at=COALESCE(started_at,CURRENT_TIMESTAMP) WHERE salon_id=:id AND status IN ('PENDING_PAYMENT','NONE')"),{"id":salon_id})
     return {"ok":True}
+
+@app.patch("/api/superadmin/salons/{salon_id}/subscription")
+def superadmin_subscription(salon_id:str,request:Request,days:int=30,plan:str="PRO"):
+    u=auth_user(request)
+    if u["role"]!="superadmin": raise HTTPException(403,"Недостаточно прав")
+    plan=plan.upper()
+    if plan not in PLANS: raise HTTPException(400,"Неизвестный тариф")
+    if days<1 or days>3650: raise HTTPException(400,"Некорректный срок")
+    with get_engine().begin() as conn:
+        conn.execute(text("""INSERT INTO subscriptions(id,salon_id,plan,status,price,currency,started_at,expires_at)
+          VALUES(:id,:sid,:plan,'ACTIVE',:price,'UZS',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + INTERVAL '30 days')
+          ON CONFLICT(salon_id) DO UPDATE SET plan=:plan,status='ACTIVE',price=:price,started_at=COALESCE(subscriptions.started_at,CURRENT_TIMESTAMP),
+          expires_at=CURRENT_TIMESTAMP + (:days || ' days')::interval,updated_at=CURRENT_TIMESTAMP"""),
+          {"id":uid(),"sid":salon_id,"plan":plan,"price":PLANS[plan]["price"],"days":days})
+        conn.execute(text("UPDATE salons SET is_active=TRUE,status='ACTIVE' WHERE id=:id"),{"id":salon_id})
+    return {"ok":True,"status":"ACTIVE","days":days,"plan":plan}
 
 @app.get("/")
 def index(): return FileResponse(BASE_DIR/"frontend"/"index.html")
