@@ -78,6 +78,51 @@ SCHEMA = [
 """CREATE INDEX IF NOT EXISTS idx_appointments_salon_time ON appointments(salon_id,start_at)"""
 ]
 
+def seed_demo_salons() -> None:
+    demos = [
+        ("demo-lumiere","Lumière Beauty","Элегантный салон красоты в светлом премиальном стиле.","+998 90 100 10 01","Ташкент, Мирзо-Улугбекский район","light","#7c3aed"),
+        ("demo-noir","NOIR Barber Club","Тёмный брутальный барбершоп с атмосферой мужского клуба.","+998 90 100 10 02","Ташкент, Юнусабад","dark","#f59e0b"),
+        ("demo-bloom","Bloom Studio","Мягкая уютная студия для красоты, ухода и расслабления.","+998 90 100 10 03","Ташкент, Чиланзар","soft","#db6b9b"),
+        ("demo-atelier","ATELIER 24","Современная студия с минималистичным digital-дизайном.","+998 90 100 10 04","Ташкент, Яшнабад","modern","#06b6d4")
+    ]
+    catalogs = [
+        [("Женская стрижка","Стрижка, укладка и уход",120000,60),("Окрашивание","Окрашивание и тонирование",280000,150),("Макияж","Вечерний или дневной макияж",180000,60)],
+        [("Мужская стрижка","Стрижка машинкой и ножницами",90000,60),("Стрижка + борода","Полный мужской образ",140000,90),("Оформление бороды","Контур и уход",70000,45)],
+        [("Маникюр","Комбинированный маникюр",100000,75),("Маникюр + покрытие","Маникюр с гель-лаком",150000,120),("Брови","Коррекция и оформление",80000,45)],
+        [("Signature Hair","Авторская стрижка и укладка",200000,90),("Color Lab","Сложное окрашивание",350000,180),("Express Beauty","Быстрый beauty-комплекс",160000,60)]
+    ]
+    masters = [
+        [("Анна","Колорист и стилист"),("Мария","Визажист")],
+        [("Алекс","Барбер, классические стрижки"),("Денис","Барбер, борода и fade")],
+        [("София","Мастер ногтевого сервиса"),("Лейла","Бровист и lash-мастер")],
+        [("Ника","Hair artist"),("Алина","Beauty artist")]
+    ]
+    with get_engine().begin() as conn:
+        for idx,d in enumerate(demos):
+            if conn.execute(text("SELECT 1 FROM salons WHERE slug=:slug"),{"slug":d[0]}).first():
+                continue
+            sid=uid()
+            conn.execute(text("""INSERT INTO salons(id,slug,name,description,phone,address,timezone,theme,accent_color,is_active)
+              VALUES(:id,:slug,:name,:description,:phone,:address,'Asia/Tashkent',:theme,:accent,TRUE)"""),
+              {"id":sid,"slug":d[0],"name":d[1],"description":d[2],"phone":d[3],"address":d[4],"theme":d[5],"accent":d[6]})
+            service_ids=[]
+            for name,desc,price,duration in catalogs[idx]:
+                xid=uid(); service_ids.append(xid)
+                conn.execute(text("""INSERT INTO services(id,salon_id,name,description,price,duration_minutes,is_active)
+                  VALUES(:id,:sid,:name,:description,:price,:duration,TRUE)"""),
+                  {"id":xid,"sid":sid,"name":name,"description":desc,"price":price,"duration":duration})
+            for name,desc in masters[idx]:
+                mid=uid()
+                conn.execute(text("""INSERT INTO masters(id,salon_id,name,description,is_active)
+                  VALUES(:id,:sid,:name,:description,TRUE)"""),{"id":mid,"sid":sid,"name":name,"description":desc})
+                for service_id in service_ids:
+                    conn.execute(text("INSERT INTO master_services(master_id,service_id) VALUES(:master,:service)"),
+                      {"master":mid,"service":service_id})
+                for weekday in range(7):
+                    conn.execute(text("""INSERT INTO master_schedules(id,master_id,weekday,start_time,end_time,is_working)
+                      VALUES(:id,:master,:weekday,'10:00','19:00',:working)"""),
+                      {"id":uid(),"master":mid,"weekday":weekday,"working":weekday < 6})
+
 def init_db() -> None:
     engine = get_engine()
     with engine.begin() as conn:
@@ -91,3 +136,4 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE users ADD COLUMN master_id VARCHAR(64)"))
         else:
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS master_id VARCHAR(64)"))
+    seed_demo_salons()
