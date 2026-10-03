@@ -316,7 +316,7 @@ def logout(request:Request,response:Response):
 @app.get("/api/me")
 def me(request:Request):
     u=auth_user(request)
-    data={k:u[k] for k in ("id","name","email","role","salon_id","salon_name","salon_slug")}
+    data={k:u[k] for k in ("id","name","email","role","salon_id","salon_name","salon_slug","master_id")}
     data["is_impersonating"]=bool(request.cookies.get("salonos_superadmin_return"))
     return data
 
